@@ -1,7 +1,6 @@
 #define MODULE LIST
 
 #include <list.h>
-#include <peb_util.h>
 
 void list_add_before(lanchor *a, lanchor *n, list *l){
     a->n = n;
