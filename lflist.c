@@ -139,28 +139,25 @@ bool soft_eqx(volatile flx *a, flx *b){
 }
 
 static
-flx (casx)(const char *f, int l, flx n, volatile flx *a, flx *e){
-    /* assert(n.nil || (a != &pt(n)->p && a != &pt(n)->n)); */
-    /* assert(n.pt || !e->pt); */
-    /* assert(!eq2(n, *e)); */
+flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
+    assert(!eq2(n, e));
+    assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
     assert(xadd(1, &cas_ops), 1);
-    log(2, "CAS! %:% - % if %, addr:%", f, l, n, *e, a);
-    flx oe = *e;
-    /* *e = readx(a); */
-    /* if(!eq2(*e, oe)) */
-    /*     return *e; */
-    *e = cas2(n, a, oe);
-    log(2, "% %:%- found:% addr:%", eq2(*e, oe)? "WON" : "LOST", f, l, *e, a);
-    if(e->gen > n.gen && e->gen - n.gen >= (UPTR_MAX >> 1))
+    
+    log(2, "CAS! %:% - % if %, addr:%", f, l, n, e, a);
+    flx ne = cas2(n, a, e);
+    log(2, "% %:%- found:% addr:%", eq2(e, ne)? "WON" : "LOST", f, l, e, a);
+    
+    if((int)(ne.gen - e.gen) < 0)
         SUPER_RARITY("woahverflow");
     assert(!pt(n) || flanchor_valid(n));
-    return *e;
+    return ne;
 }
 
 static
 howok (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
     flx oe = *e;
-    (casx)(f, l, n, a, e);
+    *e = (casx)(f, l, n, a, *e);
     if(eq2(*e, oe))
         return *e = n, WON;
     if(eq2(*e, n))
@@ -168,11 +165,12 @@ howok (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
     return NOT;
 }
 
+/* TODO: pretty inaccurate at this point. */
 static
 howok (updx_ok_modhlp)(const char *f, int l, flx n,
                               volatile flx *a, flx *e){
     flx oe = *e;
-    (casx)(f, l, n, a, e);
+    *e = (casx)(f, l, n, a, *e);
     if(eq2(*e, oe))
         return *e = n, WON;
     if(eq2(*e, n))
@@ -204,7 +202,7 @@ bool (progress)(flx *o, flx n, cnt loops){
     bool eq = eq2(*o, n);
     *o = n;
     countloops(loops);
-    return !eq;
+    return !eq || !pt(n);
 }
 
 static
@@ -238,6 +236,7 @@ err (lflist_del)(flx a, type *t){
         if(help_next(a, &n, &np, &refn, t))
             break;
         assert(pt(np) == pt(a));
+        
         if(help_prev(a, &p, &pn, &refp, &refpp, t))
             break;
         assert(pt(pn) == pt(a) && pn.st < COMMIT && pn.st > ADD);
@@ -245,7 +244,6 @@ err (lflist_del)(flx a, type *t){
         bool has_winner = n.st >= ABORT;
         if(!updx_won(fl(n, COMMIT, n.gen + 1), &pt(a)->n, &n))
             continue;
-        assert(!del_won || has_winner);
         del_won = del_won || !has_winner;
 
         pn_ok = updx_ok(fl(n, pn.st, pn.gen + 1), &pt(p)->n, &pn);
@@ -284,7 +282,7 @@ err (lflist_del)(flx a, type *t){
 
 report_finish:
     ppl(2, p, pn, pn_ok);
-    casx((flx){.st=COMMIT,.gen=a.gen}, &pt(a)->p, &p);
+    casx((flx){.st=COMMIT,.gen=a.gen}, &pt(a)->p, p);
     
 cleanup:
     assert(flanchor_valid(a));
@@ -303,8 +301,8 @@ err (lflist_enq)(flx a, type *t, lflist *l){
             return -1;
         if(ap.st == COMMIT)
             break;
-        assert(pt(ap));
         flx apn = pt(ap)->n;
+        /* TODO: soft_eqx doesn't suffice. Would a reversed soft_eqx work? */
         if(!eqx(&pt(a)->p, &ap))
             continue;
         if(pt(apn) == pt(a))
@@ -325,7 +323,6 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     if(oap.st != COMMIT){
         assert(xadd(1, &helpful_enqs), 1);
         flx n = soft_readx(&pt(a)->n);
-        assert(n.st == COMMIT);
         if(pt(n) && !refupd(&n, (flx[1]){}, &pt(a)->n, t)){
             finish_del(a, ap, n, soft_readx(&pt(n)->p), t);
             flinref_down(&n, t);
@@ -336,20 +333,15 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 
     markp amp;
     flx op = {}, opn = {}, refpp = {}, p = {}, pn = {};
-    for(int c = 0;; countloops(c++)){
-        assert(flanchor_valid(nil));
-        
-        if(help_prev(nil, &p, &pn, (flx[]){p}, &refpp, t))
-            EWTF();
-        assert(!eq2(op, p) || !eq2(opn, pn)), op = p, opn = pn;
-        assert(pt(p) != pt(a));
-
-        pt(a)->p.markp = amp = fl(p, ADD, 0).markp;
+    for(int c = 0;; c++, assert(progress(&op, p, c) | progress(&opn, pn, c))){
+        muste(help_prev(nil, &p, &pn, (flx[]){p}, &refpp, t));
+        pt(a)->p = ap = fl(p, ADD, ap.gen);
         if(updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1), &pt(p)->n, &pn))
             break;
     }
-    casx(fl(a, RDY, p.gen + 1), &l->nil.p, (flx[]){p});
-    casx(fl(p, RDY, a.gen + 1), &pt(a)->p, &(flx){.markp=amp, a.gen + 1});
+    casx(fl(a, RDY, p.gen + 1), &l->nil.p, p);
+    casx(rup(ap, .st=RDY), &pt(a)->p, ap);
+    
     flinref_down(&p, t);
     flinref_down(&refpp, t);
     return 0;
@@ -387,7 +379,7 @@ static void (finish_del)(flx a, flx p, flx n, flx np, type *t){
         if(nn.nil && nn.st == ADD){
             flx nnp = readx(&pt(nn)->p);
             if(pt(nnp) == pt(a))
-                casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, &nnp);
+                casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
         }
     }else{
         flx nn = readx(&pt(n)->n);
