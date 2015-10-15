@@ -1,45 +1,10 @@
 /**
- * A lockfree double linked list. It supports queue operations and
- * arbitrary deletion but only allows addition at the end of the
- * list. It's uniquely robust in that it neither calls malloc nor forbids
- * the immediate reuse of deleted nodes. Concurrent calls to del(a) will
- * cooperate up to the point where no subsequent deq() will return a, but
- * del(a) can't abort enq(a), and vice-versa.
- *
- * Nodes ("flanchors") have a generation count incremented upon enq(). So
- * do double word node references ("flx"). del() and enq() abort if called
- * with an flx of the wrong gen, so you can achieve things like "remove a
- * from set s iff a is still in state x."
- *
- * An lflist works a lot like a regular list with a dummy ("nil")
- * node. del(a) still "basically" sets n->p=p; p->n=n and enq(a, l) sets
- * l->nil.p->n = a; l->nil.p = a.
- *
- * This works because for flanchor a, a', del(a') writes a->n iff a->n ==
- * a' and help_prev(a') deduced or ensured that a'->p == a and, for all p,
- * no del(a) will make any successful writes to p->n before it reads a->n.
- *
- * The first condition is given by CAS and the trick to ensuring the other
- * two is that 'a' maintains a transaction counter and state flags in
- * a->n.gen and a->n.st.
- *
- * Before reading a->p, del(a) reads ngen := a->n.gen. After help_prev(a)
- * in del(a) finds p | a p->n write could be attempted, del(a) will set
- * a->n.gen = ngen + 1 and a->n.st = COMMIT iff a->n.gen == ngen. If it
- * succeeds there, it'll write p->n = a iff p->n.gen hasn't been updated
- * since it last read p->n. If it fails either step, it restarts. (This
- * iff behavior is achieved by CAS)
- *
- * So if help_prev(n) finds an := a->n | an.st == COMMIT, it reads p :=
- * a->p
- *  
- *
  * Alex Podolsky <apodolsk@andrew.cmu.edu>
  */
 
 #define MODULE LFLISTM
 
-#define E_LFLISTM 1, BRK, LVL_TODO
+#define E_LFLISTM 0, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -51,7 +16,7 @@ dbg cnt naborts, paborts, pn_oks, helpful_enqs,
 #ifndef FAKELOCKFREE
 
 #define LIST_CHECK_FREQ 0
-#define FLANC_CHECK_FREQ 5
+#define FLANC_CHECK_FREQ E_DBG_LVL ? 5 : 0
 #define MAX_LOOP 0
 
 #define ADD FL_ADD
@@ -152,6 +117,7 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     return ne;
 }
 
+#include <pthread.h>
 static
 howok (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
     flx oe = *e;
@@ -239,7 +205,8 @@ err (lflist_del)(flx a, type *t){
 
         bool has_winner = n.st >= ABORT;
         if(!updx_won(fl(n, COMMIT, n.gen + 1), &pt(a)->n, &n))
-            continue;
+         continue;
+
         del_won = del_won || !has_winner;
 
         pn_ok = updx_ok(fl(n, pn.st, pn.gen + 1), &pt(p)->n, &pn);
@@ -252,11 +219,6 @@ err (lflist_del)(flx a, type *t){
     
     if(!del_won || p.gen != a.gen)
         goto cleanup;
-
-    if(pn_ok || pt(np) == pt(a))
-        assert(eq2(p, pt(a)->p) || pt(a)->p.gen != a.gen);
-    if(pn_ok || pt(np) != pt(a))
-        assert(n.pt == pt(a)->n.pt || pt(a)->p.gen != a.gen);
 
     /* Must be p abort */
     if(!pn_ok && pt(np) == pt(a)){
@@ -273,7 +235,6 @@ err (lflist_del)(flx a, type *t){
         goto cleanup;
 
     ppl(2, n, np, pn_ok);
-    assert(flanchor_valid(n));
     if(finish_del(a, p, n, np, t))
         goto cleanup;
 
@@ -282,8 +243,6 @@ report_finish:
     casx((flx){.st=COMMIT,.gen=a.gen}, &pt(a)->p, p);
     
 cleanup:
-    assert(flanchor_valid(a));
-    
     flinref_down(&refn, t);
     flinref_down(&refp, t);
     flinref_down(&refpp, t);
@@ -342,6 +301,7 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     }
     casx(fl(a, RDY, p.gen + 1), &l->nil.p, p);
     casx(fl(p, RDY, a.gen + 1), &pt(a)->p, ap);
+    
     flinref_down(&p, t);
     flinref_down(&refpp, t);
     return 0;
@@ -385,8 +345,6 @@ static err (finish_del)(flx a, flx p, flx n, flx np, type *t){
     }
 
     return 0;
-    
-    assert(flanchor_valid(n));
 }
 
 static 
