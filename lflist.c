@@ -39,7 +39,7 @@
 
 #define MODULE LFLISTM
 
-#define E_LFLISTM 0, BRK, LVL_TODO
+#define E_LFLISTM 1, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -51,7 +51,7 @@ dbg cnt naborts, paborts, pn_oks, helpful_enqs,
 #ifndef FAKELOCKFREE
 
 #define LIST_CHECK_FREQ 0
-#define FLANC_CHECK_FREQ 0
+#define FLANC_CHECK_FREQ 5
 #define MAX_LOOP 0
 
 #define ADD FL_ADD
@@ -199,10 +199,8 @@ void countloops(cnt loops){
 
 static
 bool (progress)(flx *o, flx n, cnt loops){
-    bool eq = eq2(*o, n);
-    *o = n;
     countloops(loops);
-    return !eq || !pt(n);
+    return seq_first(eq2(*o, n), *o = n) || !pt(n);
 }
 
 static
@@ -333,8 +331,9 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 
     markp amp;
     flx op = {}, opn = {}, refpp = {}, p = {}, pn = {};
-    for(int c = 0;; c++, assert(progress(&op, p, c) | progress(&opn, pn, c))){
+    for(int c = 0;;){
         muste(help_prev(nil, &p, &pn, (flx[]){p}, &refpp, t));
+        assert(progress(&op, p, c++) | progress(&opn, pn, 0));
         pt(a)->p = ap = fl(p, ADD, ap.gen);
         if(updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1), &pt(p)->n, &pn))
             break;
@@ -375,24 +374,19 @@ static void (finish_del)(flx a, flx p, flx n, flx np, type *t){
        only reference to n reachable from nil. */
     if(pt(np) && np.st == ADD && onp.gen == np.gen){
         assert(!n.nil);
-        flx nn = readx(&pt(n)->n);
+        flx nn = soft_readx(&pt(n)->n);
         if(nn.nil && nn.st == ADD){
-            flx nnp = readx(&pt(nn)->p);
+            flx nnp = soft_readx(&pt(nn)->p);
             if(pt(nnp) == pt(a))
                 casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
         }
-    }else{
-        flx nn = readx(&pt(n)->n);
-        assert(!pt(nn) || flanchor_valid(nn));
     }
-
-    assert(flanchor_valid(n));
 }
 
 static 
 err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
     flx on = *refn;
-    for(cnt nl = 0, npl = 0;; assert(progress(&on, *n, nl++))){
+    for(cnt nl = 0, npl = 0;; progress(&on, *n, nl++)){
         do if(!pt(*n)) return *np = (flx){}, -1;
         while(refupd(n, refn, &pt(a)->n, t));
         
@@ -416,7 +410,7 @@ err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
 static 
 err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
     flx op = *p, opn = *pn;
-    for(cnt pl = 0;; assert(progress(&op, *p, pl++))){
+    for(cnt pl = 0;; progress(&op, *p, pl++)){
         for(cnt pnl = 0;; countloops(pl + pnl++)){
             if(!soft_eqx(&pt(a)->p, p))
                 break;
