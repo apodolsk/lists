@@ -205,44 +205,19 @@ err (lflist_del)(flx a, type *t){
 
         bool has_winner = n.st >= ABORT;
         if(!updx_won(fl(n, COMMIT, n.gen + 1), &pt(a)->n, &n))
-         continue;
-
+            continue;
         del_won = del_won || !has_winner;
 
-        pn_ok = updx_ok(fl(n, pn.st, pn.gen + 1), &pt(p)->n, &pn);
-        if(pn_ok)
+        if((pn_ok = updx_ok(fl(n, pn.st, pn.gen + 1), &pt(p)->n, &pn)))
             break;
     }
     if(pn_ok) assert(xadd(1, &pn_oks), 1);
     else if(pt(np) == pt(a)) assert(xadd(1, &paborts), 1);
     else if(pt(np) != pt(a)) assert(xadd(1, &naborts), 1);
-    
-    if(!del_won || p.gen != a.gen)
-        goto cleanup;
 
-    /* Must be p abort */
-    if(!pn_ok && pt(np) == pt(a)){
-        n = soft_readx(&pt(a)->n);
-        if(n.st <= RDY)
-            goto report_finish;
-        np = refupd(&n, &refn, NULL, t) ? (flx){} : soft_readx(&pt(n)->p);
-        if(!pt(np))
-            goto report_finish;
-    }
-
-    p = soft_readx(&pt(a)->p);
-    if(p.gen != a.gen)
-        goto cleanup;
-
-    ppl(2, n, np, pn_ok);
-    if(finish_del(a, p, n, np, t))
-        goto cleanup;
-
-report_finish:
-    ppl(2, p, pn, pn_ok);
-    casx((flx){.st=COMMIT,.gen=a.gen}, &pt(a)->p, p);
-    
-cleanup:
+    if(pn_ok == WON && !finish_del(a, p, n, np, t))
+        casx((flx){.st=COMMIT,.gen=a.gen}, &pt(a)->p, p);
+        
     flinref_down(&refn, t);
     flinref_down(&refp, t);
     flinref_down(&refpp, t);
@@ -414,24 +389,10 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
                 if(!updx_won(fl(a, ppn.st == COMMIT ? ABORT : COMMIT, pn->gen + 1),
                              &pt(*p)->n, pn))
                     break;
-                if(pn->st == ABORT){
-                    assert((eq2(pt(a)->p, *p) && pt(pp)->n.pt == p->pt)
-                           || !eq2(pt(*p)->n, *pn)
-                           || !eq2(pt(*p)->p, pp));
+                if(pn->st == ABORT)
                     return 0;
-                }
-                assert(ppn.st < COMMIT);
-                assert(ppn.st > ADD);
 
-                if(updx_ok(fl(a, ppn.st, ppn.gen + 1), &pt(pp)->n, &ppn))
-                {
-                    assert(eq2(pt(a)->p, *p)
-                           || pt(a)->p.pt == pp.pt
-                           || !eq2(pt(pp)->n, ppn));
-                    assert(pt(*p)->n.st == COMMIT
-                           || !pt(*p)->n.st
-                           || !eq2(pp.gen, pt(*p)->p.gen));
-                }
+                updx_ok(fl(a, ppn.st, ppn.gen + 1), &pt(pp)->n, &ppn);
             }
         }
     newp:;
