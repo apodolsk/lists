@@ -61,7 +61,7 @@ dbg cnt naborts, paborts, pn_oks, helpful_enqs,
 
 static err help_next(flx a, flx *n, flx *np, flx *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t);
-static void finish_del(flx a, flx p, flx n, flx np, type *t);
+static err finish_del(flx a, flx p, flx n, flx np, type *t);
 
 #define help_next(as...) trace(LFLISTM, 3, help_next, as)
 #define help_prev(as...) trace(LFLISTM, 3, help_prev, as)
@@ -143,11 +143,9 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!eq2(n, e));
     assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
     assert(xadd(1, &cas_ops), 1);
-    
-    log(2, "CAS! %:% - % if %, addr:%", f, l, n, e, a);
+    log(2, "CAS! %:% - % if %, addr:%", f, l, n, *e, a);
     flx ne = cas2(n, a, e);
-    log(2, "% %:%- found:% addr:%", eq2(e, ne)? "WON" : "LOST", f, l, e, a);
-    
+    log(2, "% %:%- found:% addr:%", eq2(*e, oe)? "WON" : "LOST", f, l, *e, a);
     if((int)(ne.gen - e.gen) < 0)
         SUPER_RARITY("woahverflow");
     assert(!pt(n) || flanchor_valid(n));
@@ -165,7 +163,6 @@ howok (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
     return NOT;
 }
 
-/* TODO: pretty inaccurate at this point. */
 static
 howok (updx_ok_modhlp)(const char *f, int l, flx n,
                               volatile flx *a, flx *e){
@@ -199,8 +196,10 @@ void countloops(cnt loops){
 
 static
 bool (progress)(flx *o, flx n, cnt loops){
+    bool eq = eq2(*o, n);
+    *o = n;
     countloops(loops);
-    return seq_first(eq2(*o, n), *o = n) || !pt(n);
+    return !eq;
 }
 
 static
@@ -230,11 +229,10 @@ err (lflist_del)(flx a, type *t){
     bool del_won = false;
     flx pn, refp = {}, refpp = {}, p = {};
     flx np, refn = {}, n = soft_readx(&pt(a)->n);
-    for(int lps = 0;; countloops(lps++)){
+    for(int l = 0;; countloops(l++)){
         if(help_next(a, &n, &np, &refn, t))
             break;
         assert(pt(np) == pt(a));
-        
         if(help_prev(a, &p, &pn, &refp, &refpp, t))
             break;
         assert(pt(pn) == pt(a) && pn.st < COMMIT && pn.st > ADD);
@@ -276,7 +274,8 @@ err (lflist_del)(flx a, type *t){
 
     ppl(2, n, np, pn_ok);
     assert(flanchor_valid(n));
-    finish_del(a, p, n, np, t);
+    if(finish_del(a, p, n, np, t))
+        goto cleanup;
 
 report_finish:
     ppl(2, p, pn, pn_ok);
@@ -299,8 +298,8 @@ err (lflist_enq)(flx a, type *t, lflist *l){
             return -1;
         if(ap.st == COMMIT)
             break;
+        assert(pt(ap));
         flx apn = pt(ap)->n;
-        /* TODO: soft_eqx doesn't suffice. Would a reversed soft_eqx work? */
         if(!eqx(&pt(a)->p, &ap))
             continue;
         if(pt(apn) == pt(a))
@@ -321,6 +320,7 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     if(oap.st != COMMIT){
         assert(xadd(1, &helpful_enqs), 1);
         flx n = soft_readx(&pt(a)->n);
+        assert(n.st == COMMIT);
         if(pt(n) && !refupd(&n, (flx[1]){}, &pt(a)->n, t)){
             finish_del(a, ap, n, soft_readx(&pt(n)->p), t);
             flinref_down(&n, t);
@@ -329,18 +329,19 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     
     flx nil = pt(a)->n = (flx){.nil=1, ADD, mpt(&l->nil), pt(a)->n.gen + 1};
 
-    markp amp;
     flx op = {}, opn = {}, refpp = {}, p = {}, pn = {};
-    for(int c = 0;;){
-        muste(help_prev(nil, &p, &pn, (flx[]){p}, &refpp, t));
-        assert(progress(&op, p, c++) | progress(&opn, pn, 0));
+    for(int c = 0;; assert(progress(&op, p, c++) | progress(&opn, pn, 0))){
+        assert(flanchor_valid(nil));
+        
+        if(help_prev(nil, &p, &pn, (flx[]){p}, &refpp, t))
+            EWTF();
+
         pt(a)->p = ap = fl(p, ADD, ap.gen);
         if(updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1), &pt(p)->n, &pn))
             break;
     }
     casx(fl(a, RDY, p.gen + 1), &l->nil.p, p);
-    casx(rup(ap, .st=RDY), &pt(a)->p, ap);
-    
+    casx(fl(p, RDY, a.gen + 1), &pt(a)->p, ap);
     flinref_down(&p, t);
     flinref_down(&refpp, t);
     return 0;
@@ -365,7 +366,7 @@ flx (lflist_deq)(type *t, lflist *l){
     }
 }
 
-static void (finish_del)(flx a, flx p, flx n, flx np, type *t){
+static err (finish_del)(flx a, flx p, flx n, flx np, type *t){
     flx onp = np;
     if(pt(np) == pt(a))
         updx_ok_modhlp(fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
@@ -373,25 +374,29 @@ static void (finish_del)(flx a, flx p, flx n, flx np, type *t){
     /* Clean up after an interrupted add of n. In this case, a->n is the
        only reference to n reachable from nil. */
     if(pt(np) && np.st == ADD && onp.gen == np.gen){
-        assert(!n.nil);
         flx nn = soft_readx(&pt(n)->n);
         if(nn.nil && nn.st == ADD){
             flx nnp = soft_readx(&pt(nn)->p);
+            if(pt(a)->p.gen != a.gen)
+                return -1;
             if(pt(nnp) == pt(a))
                 casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
         }
     }
+
+    return 0;
+    
+    assert(flanchor_valid(n));
 }
 
 static 
 err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
-    flx on = *refn;
-    for(cnt nl = 0, npl = 0;; progress(&on, *n, nl++)){
+    for(flx on = *refn;; assert(progress(&on, *n, 0))){
         do if(!pt(*n)) return *np = (flx){}, -1;
         while(refupd(n, refn, &pt(a)->n, t));
-        
-        for(flx onp = *np = readx(&pt(*n)->p);;
-            progress(&onp, *np, nl + npl++))
+
+        flx onp = *np = readx(&pt(*n)->p);
+        for(cnt l = 0;; assert(progress(&onp, *np, l++)))
         {
             if(pt(*np) == pt(a) && np->st != ABORT)
                 return 0;
@@ -410,7 +415,7 @@ err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
 static 
 err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
     flx op = *p, opn = *pn;
-    for(cnt pl = 0;; progress(&op, *p, pl++)){
+    for(cnt pl = 0;; assert(progress(&op, *p, pl++))){
         for(cnt pnl = 0;; countloops(pl + pnl++)){
             if(!soft_eqx(&pt(a)->p, p))
                 break;
@@ -516,6 +521,7 @@ bool lflist_valid(flx a){
     lflist *on = NULL;
     for(flx c = a;;){
         assert(_flanchor_valid(c, &c, &on));
+        TODO();
         if(!pt(c) || pt(c) == pt(a))
             break;
     }
