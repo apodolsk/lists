@@ -80,5 +80,7 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     unlock_lflist(l);
     return 0;
 }
+
+void report_lflist_profile(void){}
  
 #endif

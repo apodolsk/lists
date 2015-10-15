@@ -1,8 +1,5 @@
 #pragma once
 
-extern dbg cnt naborts, paborts, pn_oks, helpful_enqs,
-           cas_ops, atomic_read_ops, lflist_ops;
-
 #ifdef FAKELOCKFREE
 #include <fakelflist.h>
 #else
@@ -92,6 +89,8 @@ bool flanchor_unused(flanchor *a);
 
 bool lflist_valid(flx a);
 bool flanchor_valid(flx ax);
+
+void report_lflist_profile(void);
 
 #ifndef FAKELOCKFREE
 
