@@ -11,7 +11,7 @@
 #include <nalloc.h>
 
 volatile dbg cnt enqs, enq_restarts, helpful_enqs, dels, del_restarts,
-    pn_wins, naborts, paborts, cas_ops, cas_fails;
+    pn_wins, naborts, paborts, cas_ops, cas_fails, prev_helps, prev_help_attempts;
 
 #ifndef FAKELOCKFREE
 
@@ -35,11 +35,7 @@ static err finish_del(flx a, flx p, flx n, flx np, type *t);
 #define flinref_up(as...) trace(LFLISTM, 5, flinref_up, as)
 #define flinref_down(as...) trace(LFLISTM, 5, flinref_down, as)
 
-#define progress(o, n, loops) progress(o, ppl(2, n), loops)
 #define casx(as...) casx(__func__, __LINE__, as)
-#define updx_ok(as...) updx_ok(__func__, __LINE__, as)
-#define updx_ok_modadd(as...) updx_ok_modadd(__func__, __LINE__, as)
-#define updx_won(as...) updx_won(__func__, __LINE__, as)
 
 static inline
 flanchor *pt(flx a){
@@ -109,6 +105,8 @@ bool soft_eqx(volatile flx *a, flx *b){
     return eq2(old, *b);
 }
 
+#include <stdatomic.h>
+#define casx(as...) casx(__func__, __LINE__, as)
 static
 flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!eq2(n, e));
@@ -116,6 +114,8 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     profile_upd(&cas_ops);
     
     log(2, "CAS! %:% - % if %, addr:%", f, l, n, *e, a);
+    /* flx ne = e; */
+    /* atomic_compare_exchange_strong(a, &ne, n); */
     flx ne = cas2(n, a, e);
     log(2, "% %:%- found:% addr:%", eq2(*e, oe)? "WON" : "LOST", f, l, *e, a);
     
@@ -127,6 +127,8 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     return ne;
 }
 
+#define updx_ok(as...) updx_ok(__func__, __LINE__, as)
+static
 howok (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
     flx oe = *e;
     *e = (casx)(f, l, n, a, *e);
@@ -137,28 +139,24 @@ howok (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
     return NOT;
 }
 
+#define updx_ok_modst(as...) updx_ok_modst(__func__, __LINE__, as)
 static
-howok (updx_ok_modadd)(const char *f, int l, flx n,
-                              volatile flx *a, flx *e){
+howok (updx_ok_modst)(const char *f, int l,
+                      flstate st, flstate nst, flx n, volatile flx *a, flx *e){
     flx oe = *e;
     *e = (casx)(f, l, n, a, *e);
     if(eq2(*e, oe))
         return *e = n, WON;
     if(eq2(*e, n))
         return OK;
-    if(e->st == RDY && n.st == ADD){
-        oe.st = n.st = RDY;
-        if(eq2(*e, oe)){
-            *e = oe;
-            return (updx_ok)(f, l, n, a, e);
-        }
-    }
+    if(eq2(*e, rup(oe, .st=st)))
+        return (updx_ok)(f, l, rup(n, .st=nst), a, e);
     return NOT;
 }
 
+#define updx_won(as...) updx_won(__func__, __LINE__, as)
 static
-bool (updx_won)(const char *f, int l,
-                       flx n, volatile flx *a, flx *e){
+bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     return WON == (updx_ok)(f, l, n, a, e);
 }
 
@@ -168,6 +166,7 @@ void countloops(cnt loops){
         SUPER_RARITY("LOTTA LOOPS: %", loops);
 }
 
+#define progress(o, n, loops) progress(o, ppl(2, n), loops)
 static
 bool (progress)(flx *o, flx n, cnt loops){
     bool eq = eq2(*o, n);
@@ -209,11 +208,15 @@ err (lflist_del)(flx a, type *t){
         assert(pt(np) == pt(a));
         if(help_prev(a, &p, &pn, &refp, &refpp, t))
             break;
-        assert(pt(pn) == pt(a) && pn.st < COMMIT && pn.st > ADD);
+        assert(pt(pn) == pt(a) && (pn.st == RDY || pn.st == ABORT));
 
         bool has_winner = n.st >= ABORT;
-        if(!updx_won(fl(n, COMMIT, n.gen + 1), &pt(a)->n, &n))
-            continue;
+        if(has_winner && p.nil){
+            if(!soft_eqx(&pt(a)->n, &n))
+                continue;
+        } else
+            if(!updx_won(fl(n, COMMIT, n.gen + 1), &pt(a)->n, &n))
+                continue;
         del_won = del_won || !has_winner;
 
         pn_ok = updx_ok(fl(n, pn.st, pn.gen + 1), &pt(p)->n, &pn);
@@ -234,7 +237,7 @@ err (lflist_del)(flx a, type *t){
     return -!del_won;
 }
 
-/* TODO apn check isn't  */
+/* TODO apn check isn't safe without ref */
 err (lflist_enq)(flx a, type *t, lflist *l){
     profile_upd(&enqs);
     flx ap;
@@ -250,16 +253,11 @@ err (lflist_enq)(flx a, type *t, lflist *l){
             return -1;
         break;
     }
-
-    assert(ap.st != ADD);
+    
     flx oap = ap;
-    if(!updx_won(fl(ap, ABORT, a.gen + 1), &pt(a)->p, &ap)){
-        oap = ap;
-        if(ap.gen != a.gen
-           || (assert(ap.st == COMMIT), 0)
-           || !updx_won(fl(ap, ABORT, a.gen + 1), &pt(a)->p, &ap))
+    while(!updx_won(fl(ap, ABORT, a.gen + 1), &pt(a)->p, &ap))
+        if(ap.gen != a.gen || ap.st != COMMIT)
             return -1;
-    }
        
     if(oap.st != COMMIT){
         profile_upd(&helpful_enqs);
@@ -284,7 +282,8 @@ err (lflist_enq)(flx a, type *t, lflist *l){
             break;
     }
     casx(fl(a, RDY, p.gen + 1), &l->nil.p, p);
-    casx(fl(p, RDY, a.gen + 1), &pt(a)->p, ap);
+    if(!ap.nil)
+        casx(fl(p, RDY, a.gen + 1), &pt(a)->p, ap);
     
     flinref_down(&p, t);
     flinref_down(&refpp, t);
@@ -313,11 +312,11 @@ flx (lflist_deq)(type *t, lflist *l){
 static err (finish_del)(flx a, flx p, flx n, flx np, type *t){
     flx onp = np;
     if(pt(np) == pt(a))
-        updx_ok_modadd(fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
+        updx_ok_modst(RDY, RDY, fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
 
     /* Clean up after an interrupted add of n. In this case, a->n is the
        only reference to n reachable from nil. */
-    if(pt(np) && np.st == ADD && (!pt(onp) || onp.gen == np.gen)){
+    if(pt(np) && np.st == ADD && onp.gen == np.gen){
         flx nn = soft_readx(&pt(n)->n);
         if(nn.nil && nn.st == ADD){
             flx nnp = soft_readx(&pt(nn)->p);
@@ -348,7 +347,8 @@ err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
                 return -1;
             assert(pt(*np) && (np->st == RDY || np->st == ADD));
 
-            if(updx_ok_modadd(fl(a, np->st, np->gen + n->nil), &pt(*n)->p, np))
+            if(updx_ok_modst(RDY, RDY,
+                             fl(a, np->st, np->gen + n->nil), &pt(*n)->p, np))
                 return 0;
         }
     }
@@ -395,13 +395,15 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
                     /* TODO: can avoid the a->p recheck. */
                     break;
                 }
+                profile_upd(&prev_help_attempts);
                 if(!updx_won(fl(a, ppn.st == COMMIT ? ABORT : COMMIT, pn->gen + 1),
                              &pt(*p)->n, pn))
                     break;
                 if(pn->st == ABORT)
                     return 0;
 
-                updx_ok(fl(a, ppn.st, ppn.gen + 1), &pt(pp)->n, &ppn);
+                if(updx_won(fl(a, ppn.st, ppn.gen + 1), &pt(pp)->n, &ppn))
+                    profile_upd(&prev_helps);
             }
         }
     newp:;
@@ -590,7 +592,7 @@ void report_lflist_profile(void){
         return;
     ppl(0, enqs, (double) enq_restarts/enqs, (double) helpful_enqs/enqs,
         dels, (double) del_restarts/dels, (double) pn_wins/dels,
-        (double) naborts/dels, (double) paborts/dels, cas_ops, (double) cas_fails/cas_ops);
+        (double) naborts/dels, (double) paborts/dels, cas_ops, (double) cas_fails/cas_ops, prev_help_attempts, (double) prev_helps/(double) prev_help_attempts);
 
 }
 
