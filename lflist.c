@@ -4,14 +4,16 @@
 
 #define MODULE LFLISTM
 
-#define E_LFLISTM 1, BRK, LVL_TODO
+#define E_LFLISTM 0, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
 #include <nalloc.h>
 
-volatile dbg cnt enqs, enq_restarts, helpful_enqs, dels, del_restarts,
-    pn_wins, naborts, paborts, cas_ops, cas_fails, prev_helps, prev_help_attempts;
+static volatile
+dbg cnt enqs, enq_restarts, helpful_enqs, dels, del_restarts,
+        pn_wins, naborts, paborts, cas_ops, cas_fails, prev_helps,
+        prev_help_attempts;
 
 #ifndef FAKELOCKFREE
 
@@ -34,8 +36,6 @@ static err finish_del(flx a, flx p, flx n, flx np, type *t);
 #define refupd(as...) trace(LFLISTM, 4, refupd, as)
 #define flinref_up(as...) trace(LFLISTM, 5, flinref_up, as)
 #define flinref_down(as...) trace(LFLISTM, 5, flinref_down, as)
-
-#define casx(as...) casx(__func__, __LINE__, as)
 
 static inline
 flanchor *pt(flx a){
@@ -66,11 +66,6 @@ void (flinref_down)(flx *a, type *t){
     if(!a->nil && pt(*a))
         t->linref_down(pt(*a));
     *a = (flx){};
-}
-
-static
-flx hard_readx(volatile flx *x){
-    return atomic_read2(x);
 }
 
 static
@@ -114,9 +109,9 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     profile_upd(&cas_ops);
     
     log(2, "CAS! %:% - % if %, addr:%", f, l, n, *e, a);
-    /* flx ne = e; */
-    /* atomic_compare_exchange_strong(a, &ne, n); */
-    flx ne = cas2(n, a, e);
+    flx ne = e;
+    atomic_compare_exchange_strong(a, &ne, n);
+    /* flx ne = cas2(n, a, e); */
     log(2, "% %:%- found:% addr:%", eq2(*e, oe)? "WON" : "LOST", f, l, *e, a);
     
     if((int)(ne.gen - e.gen) < 0)
@@ -144,11 +139,9 @@ static
 howok (updx_ok_modst)(const char *f, int l,
                       flstate st, flstate nst, flx n, volatile flx *a, flx *e){
     flx oe = *e;
-    *e = (casx)(f, l, n, a, *e);
-    if(eq2(*e, oe))
-        return *e = n, WON;
-    if(eq2(*e, n))
-        return OK;
+    howok k = (updx_ok)(f, l, n, a, e);
+    if(k)
+        return k;
     if(eq2(*e, rup(oe, .st=st)))
         return (updx_ok)(f, l, rup(n, .st=nst), a, e);
     return NOT;
@@ -211,13 +204,11 @@ err (lflist_del)(flx a, type *t){
         assert(pt(pn) == pt(a) && (pn.st == RDY || pn.st == ABORT));
 
         bool has_winner = n.st >= ABORT;
-        if(has_winner && p.nil){
-            if(!soft_eqx(&pt(a)->n, &n))
-                continue;
-        } else
-            if(!updx_won(fl(n, COMMIT, n.gen + 1), &pt(a)->n, &n))
-                continue;
-        del_won = del_won || !has_winner;
+        switch(updx_ok(fl(n, COMMIT, n.gen + 1), &pt(a)->n, &n)){
+        case NOT: continue;
+        case WON: del_won = del_won || !has_winner;
+        case OK: break;
+        }
 
         pn_ok = updx_ok(fl(n, pn.st, pn.gen + 1), &pt(p)->n, &pn);
         if(pn_ok)
@@ -290,11 +281,6 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     return 0;
 }
 
-err lflist_jam_enq(flx a){
-    return -!updx_won((flx){.st=ADD, .gen=a.gen + 1}, &pt(a)->p,
-                      &(flx){.st=ADD, .gen=a.gen});
-}
-
 flx (lflist_deq)(type *t, lflist *l){
     flx a = {.nil=1,.pt=mpt(&l->nil)};
     flx on = {};
@@ -309,7 +295,8 @@ flx (lflist_deq)(type *t, lflist *l){
     }
 }
 
-static err (finish_del)(flx a, flx p, flx n, flx np, type *t){
+static 
+err (finish_del)(flx a, flx p, flx n, flx np, type *t){
     flx onp = np;
     if(pt(np) == pt(a))
         updx_ok_modst(RDY, RDY, fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
@@ -369,6 +356,7 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
             }
             if(p->st == ADD && !updx_ok(fl(*p, RDY, a.gen), &pt(a)->p, p))
                 break;
+        newpn:
             if(pn->st < COMMIT)
                 return 0;
 
@@ -392,12 +380,11 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
                         goto newp;
                     swap(refpp, refp);
                     *pn = ppn;
-                    /* TODO: can avoid the a->p recheck. */
-                    break;
+                    goto newpn;
                 }
                 profile_upd(&prev_help_attempts);
-                if(!updx_won(fl(a, ppn.st == COMMIT ? ABORT : COMMIT, pn->gen + 1),
-                             &pt(*p)->n, pn))
+                if(!updx_ok(fl(a, ppn.st == COMMIT ? ABORT : COMMIT, pn->gen + 1),
+                            &pt(*p)->n, pn))
                     break;
                 if(pn->st == ABORT)
                     return 0;
@@ -414,24 +401,6 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
         assert(a.nil || pt(*p) != pt(a));
         *pn = soft_readx(&pt(*p)->n);
     }
-}
-
-flx (lflist_next)(flx p, lflist *l){
-    flx r, n;
-    do{
-        n = readx(&pt(p)->n);
-        if(n.nil)
-            return (flx){};
-        r = (flx){.pt = n.pt, pt(n)->p.gen};
-        if(pt(p)->p.gen != p.gen)
-            return lflist_peek(l);
-    }while(atomic_read(&pt(p)->n.gen) != n.gen);
-    return r;
-}
-
-flx (lflist_peek)(lflist *l){
-    flx n = l->nil.n;
-    return n.nil ? (flx){} : (flx){.pt = n.pt, pt(n)->p.gen};
 }
 
 flanchor *flptr(flx a){
@@ -580,7 +549,7 @@ bool _flanchor_valid(flx ax, flx *retn, lflist **on){
     }
 
     
-    /* Sniff out for unpaused universe or reordering weirdness. */
+    /* Sniff out unpaused universe or reordering weirdness. */
     assert(eq2(a->p, px));
     assert(eq2(a->n, nx));
     
@@ -590,9 +559,18 @@ bool _flanchor_valid(flx ax, flx *retn, lflist **on){
 void report_lflist_profile(void){
     if(!PROFILE_LFLIST)
         return;
-    ppl(0, enqs, (double) enq_restarts/enqs, (double) helpful_enqs/enqs,
-        dels, (double) del_restarts/dels, (double) pn_wins/dels,
-        (double) naborts/dels, (double) paborts/dels, cas_ops, (double) cas_fails/cas_ops, prev_help_attempts, (double) prev_helps/(double) prev_help_attempts);
+    lppl(0, enqs, 
+         (double) enq_restarts/enqs,
+         (double) helpful_enqs/enqs,
+         dels,
+         (double) del_restarts/dels,
+         (double) pn_wins/dels,
+         (double) naborts/dels,
+         (double) paborts/dels,
+         cas_ops,
+         (double) cas_fails/cas_ops,
+         prev_help_attempts,
+         (double) prev_helps/(double) prev_help_attempts);
 
 }
 
