@@ -4,16 +4,16 @@
 
 #define MODULE LFLISTM
 
-#define E_LFLISTM 0, BRK, LVL_TODO
+#define E_LFLISTM 1, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
 #include <nalloc.h>
 
 static volatile
-dbg cnt enqs, enq_restarts, helpful_enqs, dels, del_restarts,
-        pn_wins, naborts, paborts, cas_ops, cas_fails, prev_helps,
-        prev_help_attempts;
+dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
+        pn_wins, naborts, paborts, prev_helps,
+       prev_help_attempts, cas_ops, cas_fails, reads, nnp_help_attempts;
 
 #ifndef FAKELOCKFREE
 
@@ -68,21 +68,23 @@ void (flinref_down)(flx *a, type *t){
     *a = (flx){};
 }
 
-static
+static noinline
 flx readx(volatile flx *x){
     flx r;
     do{
         r.gen = atomic_read(&x->gen);
         r.markp = atomic_read(&x->markp);
     }while(atomic_read(&x->gen) != r.gen);
+    profile_upd(&reads);
     return r;
 }
 
-static
+static noinline
 flx soft_readx(volatile flx *x){
     flx r;
     r.markp = atomic_read(&x->markp);
     r.gen = atomic_read(&x->gen);
+    profile_upd(&reads);
     return r;
 }
 
@@ -248,7 +250,8 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     }
     
     flx oap = ap;
-    while(!updx_won(fl(ap, ABORT, a.gen + 1), &pt(a)->p, &ap))
+    for(cnt c = 0; !updx_won(fl(ap, ABORT, a.gen + 1), &pt(a)->p, &ap);
+        assert(++c < 2))
         if(ap.gen != a.gen || ap.st != COMMIT)
             return -1;
        
@@ -275,8 +278,7 @@ err (lflist_enq)(flx a, type *t, lflist *l){
             break;
     }
     casx(fl(a, RDY, p.gen + 1), &l->nil.p, p);
-    if(!ap.nil)
-        casx(fl(p, RDY, a.gen + 1), &pt(a)->p, ap);
+    casx(fl(p, RDY, a.gen + 1), &pt(a)->p, ap);
     
     flinref_down(&p, t);
     flinref_down(&refpp, t);
@@ -284,6 +286,8 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 }
 
 flx (lflist_deq)(type *t, lflist *l){
+    profile_upd(&deqs);
+    
     flx a = {.nil=1,.pt=mpt(&l->nil)};
     flx on = {};
     for(cnt lps = 0;;){
@@ -306,6 +310,7 @@ err (finish_del)(flx a, flx p, flx n, flx np, type *t){
     /* Clean up after an interrupted add of n. In this case, a->n is the
        only reference to n reachable from nil. */
     if(pt(np) && np.st == ADD && onp.gen == np.gen){
+        profile_upd(&nnp_help_attempts);
         flx nn = soft_readx(&pt(n)->n);
         if(nn.nil && nn.st == ADD){
             flx nnp = soft_readx(&pt(nn)->p);
@@ -348,6 +353,7 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
     flx op = *p, opn = *pn;
     for(cnt pl = 0;; assert(progress(&op, *p, pl++))){
         for(cnt pnl = 0;; countloops(pl + pnl++)){
+        readp:
             if(!soft_eqx(&pt(a)->p, p))
                 break;
             if(pt(*pn) != pt(a)){
@@ -365,10 +371,9 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
         readpp:;
             flx pp = soft_readx(&pt(*p)->p);
         newpp:;
-            do if(!pt(pp) || pp.st == COMMIT || pp.st == ADD){
-                    must(!soft_eqx(&pt(a)->p, p));
-                    goto newp;
-                } else assert(!eq2(pn, opn) || !eq2(pp, refpp));
+            profile_upd(&prev_help_attempts);
+            do if(pp.st != RDY)
+                   goto readp;
             while(refupd(&pp, refpp, &pt(*p)->p, t));
             
             flx ppn = soft_readx(&pt(pp)->n), oppn = {};
@@ -384,7 +389,6 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
                     *pn = ppn;
                     goto newpn;
                 }
-                profile_upd(&prev_help_attempts);
                 if(!updx_ok(fl(a, ppn.st == COMMIT ? ABORT : COMMIT, pn->gen + 1),
                             &pt(*p)->n, pn))
                     break;
@@ -396,11 +400,11 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
             }
         }
     newp:;
-        do if(!a.nil && (!pt(*p) || p->st == COMMIT || p->gen != a.gen))
+        do if(!a.nil && (p->st >= ABORT || p->gen != a.gen))
                return EARG("Gen p abort %:%", a, p);
+            else assert(pt(*p));
         while(refupd(p, refp, &pt(a)->p, t));
 
-        assert(a.nil || pt(*p) != pt(a));
         *pn = soft_readx(&pt(*p)->n);
     }
 }
@@ -561,18 +565,27 @@ bool _flanchor_valid(flx ax, flx *retn, lflist **on){
 void report_lflist_profile(void){
     if(!PROFILE_LFLIST)
         return;
+    double ideal_reads = (4 * enqs + 5 * dels + 2 * deqs);
+    double ideal_casx = (4 * enqs + 3 * dels);
     lppl(0, enqs, 
          (double) enq_restarts/enqs,
          (double) helpful_enqs/enqs,
+         deqs,
          dels,
          (double) del_restarts/dels,
          (double) pn_wins/dels,
          (double) naborts/dels,
          (double) paborts/dels,
+         (double) nnp_help_attempts/(enqs + dels),
          cas_ops,
+         (double) cas_ops/ideal_casx,
+         ideal_casx,
          (double) cas_fails/cas_ops,
-         prev_help_attempts,
-         (double) prev_helps/(double) prev_help_attempts);
+         (double) prev_help_attempts/enqs,
+         (double) prev_helps/prev_help_attempts,
+         reads,
+         (double) reads/ideal_reads
+         );
 
 }
 
