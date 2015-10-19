@@ -105,7 +105,9 @@ bool soft_eqx(volatile flx *a, flx *b){
 static
 flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!eq2(n, e));
-    assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
+    if(!(n.nil || pt(n) != cof_aligned_pow2(a, flanchor)))
+        EWTF();
+    /* assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor)); */
     profile_upd(&cas_ops);
     
     log(2, "CAS! %:% - % if %, addr:%", f, l, n, *e, a);
