@@ -332,7 +332,7 @@ err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
         flx onp = *np = readx(&pt(*n)->p);
         for(cnt l = 0;; assert(progress(&onp, *np, l++)))
         {
-            if(pt(*np) == pt(a) && np->st <= ABORT)
+            if(pt(*np) == pt(a) && np->st < ABORT)
                 return 0;
             if(!soft_eqx(&pt(a)->n, n))
                 break;
