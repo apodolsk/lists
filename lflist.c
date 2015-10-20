@@ -17,7 +17,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 
 #ifndef FAKELOCKFREE
 
-#define PROFILE_LFLIST 0
+#define PROFILE_LFLIST 1
 #define LIST_CHECK_FREQ 0
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 5 : 0
 #define MAX_LOOP 0
@@ -30,6 +30,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 static err help_next(flx a, flx *n, flx *np, flx *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t);
 static err finish_del(flx a, flx p, flx n, flx np, type *t);
+static err do_del(flx a, flx p, type *t);
 
 #define help_next(as...) trace(LFLISTM, 3, help_next, as)
 #define help_prev(as...) trace(LFLISTM, 3, help_prev, as)
@@ -187,14 +188,20 @@ err (refupd)(flx *a, flx *held, volatile flx *src, type *t){
 }
 
 err (lflist_del)(flx a, type *t){
-    assert(!a.nil);
     profile_upd(&dels);
-
-    howok pn_ok = NOT;
-    bool del_won = false;
-    flx pn = {}, refp = {}, refpp = {}, p = soft_readx(&pt(a)->p);
+    assert(!a.nil);
+    
+    flx p = soft_readx(&pt(a)->p);
     if(p.gen != a.gen || p.st >= ABORT)
         return EARG("Early gen abort: %", a);
+    return do_del(a, p, t);
+}
+
+static
+err (do_del)(flx a, flx p, type *t){
+    howok pn_ok = NOT;
+    bool del_won = false;
+    flx pn = {}, refp = {}, refpp = {};
     
     flx np, refn = {}, n = soft_readx(&pt(a)->n);
     for(int l = 0;; countloops(l++), profile_upd(&del_restarts)){
@@ -295,7 +302,7 @@ flx (lflist_deq)(type *t, lflist *l){
             EWTF();
         if(pt(n) == &l->nil || !progress(&on, n, lps++))
             return flinref_down(&n, t), (flx){};
-        if(!lflist_del(((flx){.pt=n.pt, np.gen}), t))
+        if(!do_del(((flx){.pt=n.pt, np.gen}), np, t))
             return (flx){n.mp, np.gen};
     }
 }
@@ -566,18 +573,20 @@ bool _flanchor_valid(flx ax, flx *retn, lflist **on){
 void report_lflist_profile(void){
     if(!PROFILE_LFLIST)
         return;
-    double ideal_reads = (4 * enqs + 5 * dels + 2 * deqs);
-    double ideal_casx = (4 * enqs + 3 * dels);
+    cnt ops = enqs + dels + deqs;
+    cnt del_ops = dels + deqs;
+    double ideal_reads = (4 * enqs + 5 * dels + 6 * deqs);
+    double ideal_casx = (4 * enqs + 3 * dels + 3 * deqs);
     lppl(0, enqs, 
          (double) enq_restarts/enqs,
          (double) helpful_enqs/enqs,
          deqs,
          dels,
-         (double) del_restarts/dels,
-         (double) pn_wins/dels,
-         (double) naborts/dels,
-         (double) paborts/dels,
-         (double) nnp_help_attempts/(enqs + dels),
+         (double) del_restarts/del_ops,
+         (double) pn_wins/del_ops,
+         (double) naborts/del_ops,
+         (double) paborts/del_ops,
+         (double) nnp_help_attempts/ops,
          cas_ops,
          (double) cas_ops/ideal_casx,
          ideal_casx,
