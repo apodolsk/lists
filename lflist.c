@@ -107,9 +107,8 @@ bool soft_eqx(volatile flx *a, flx *b){
 static
 flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!eq2(n, e));
-    if(!(n.nil || pt(n) != cof_aligned_pow2(a, flanchor)))
-        EWTF();
-    /* assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor)); */
+    assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
+    assert(n.st >= ABORT || pt(n));
     profile_upd(&cas_ops);
     
     log(2, "CAS! %:% - % if %, addr:%", f, l, n, *e, a);
@@ -130,8 +129,7 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
 static
 howok (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
     flx oe = *e;
-    *e = (casx)(f, l, n, a, *e);
-    if(eq2(*e, oe))
+    if(eq2(*e = (casx)(f, l, n, a, *e), oe))
         return *e = n, WON;
     if(eq2(*e, n))
         return OK;
@@ -192,12 +190,12 @@ err (lflist_del)(flx a, type *t){
     assert(!a.nil);
     profile_upd(&dels);
 
-    if(pt(a)->p.gen != a.gen || !pt(pt(a)->p))
-        return EARG("Early gen abort: %", a);
-
     howok pn_ok = NOT;
     bool del_won = false;
-    flx pn, refp = {}, refpp = {}, p = {};
+    flx pn = {}, refp = {}, refpp = {}, p = soft_readx(&pt(a)->p);
+    if(p.gen != a.gen || p.st >= ABORT)
+        return EARG("Early gen abort: %", a);
+    
     flx np, refn = {}, n = soft_readx(&pt(a)->n);
     for(int l = 0;; countloops(l++), profile_upd(&del_restarts)){
         if(help_next(a, &n, &np, &refn, t))
@@ -264,21 +262,22 @@ err (lflist_enq)(flx a, type *t, lflist *l){
             flinref_down(&n, t);
         }
     }
-    
-    flx nil = pt(a)->n = (flx){.nil=1, ADD, mpt(&l->nil), pt(a)->n.gen + 1};
 
-    flx op = {}, opn = {}, refpp = {}, p = {}, pn = {};
+    /* TODO: refp */
+    flx op = {}, opn = {}, refpp = {}, pn = {}, refp = {};
+    flx nil = pt(a)->n = (flx){.nil=1, ADD, mpt(&l->nil), pt(a)->n.gen + 1};
+    flx p = soft_readx(&pt(nil)->p);
     for(int c = 0;;
         profile_upd(&enq_restarts),
-            assert(progress(&op, p, c++) | progress(&opn, pn, 0)))
+        assert(progress(&op, p, c++) | progress(&opn, pn, 0)))
     {
-        muste(help_prev(nil, &p, &pn, (flx[]){p}, &refpp, t));
+        muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
         pt(a)->p = ap = fl(p, ADD, ap.gen);
         if(updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1), &pt(p)->n, &pn))
             break;
     }
     casx(fl(a, RDY, p.gen + 1), &l->nil.p, p);
-    casx(fl(p, RDY, a.gen + 1), &pt(a)->p, ap);
+    casx(fl(p, RDY, ap.gen), &pt(a)->p, ap);
     
     flinref_down(&p, t);
     flinref_down(&refpp, t);
@@ -333,7 +332,7 @@ err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
         flx onp = *np = readx(&pt(*n)->p);
         for(cnt l = 0;; assert(progress(&onp, *np, l++)))
         {
-            if(pt(*np) == pt(a) && np->st != ABORT)
+            if(pt(*np) == pt(a) && np->st <= ABORT)
                 return 0;
             if(!soft_eqx(&pt(a)->n, n))
                 break;
@@ -350,8 +349,10 @@ err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
 
 static 
 err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
-    flx op = *p, opn = *pn;
+    flx op = {}, opn = {};
     for(cnt pl = 0;; assert(progress(&op, *p, pl++))){
+        if(!pt(*refp))
+            goto newp;
         for(cnt pnl = 0;; countloops(pl + pnl++)){
         readp:
             if(!soft_eqx(&pt(a)->p, p))

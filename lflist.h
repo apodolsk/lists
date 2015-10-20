@@ -47,8 +47,8 @@ struct flanchor{
     volatile flx p;
 };
 #define FLANCHOR(list)                                \
-    {.n.constexp = (list) ? 3 + (uptr) (list) : 6,    \
-     .p.constexp = (list) ? 3 + (uptr) (list) : 6}
+    {.n.constexp = (list) ? 1 + (FL_RDY << 1) + (uptr) (list) : FL_COMMIT << 1, \
+     .p.constexp = (list) ? 1 + (FL_RDY << 1) + (uptr) (list) : FL_COMMIT << 1}
 CASSERT(offsetof(list, nil) == 0);
 
 typedef volatile struct lflist{
