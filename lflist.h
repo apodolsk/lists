@@ -110,7 +110,7 @@ const char *flstatestr(flstate s){
 #endif
 
 #ifndef LOG_LFLISTM
-#define LOG_LFLISTM 3
+#define LOG_LFLISTM 0
 #endif
 
 #define lflist_del(as...) linref_account(0, trace(LFLISTM, 1, lflist_del, as))

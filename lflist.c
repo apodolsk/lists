@@ -13,11 +13,11 @@
 static volatile
 dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
         pn_wins, naborts, paborts, prev_helps,
-       prev_help_attempts, cas_ops, cas_fails, reads, nnp_help_attempts;
+        prev_help_attempts, cas_ops, cas_fails, reads, nnp_help_attempts;
 
 #ifndef FAKELOCKFREE
 
-#define PROFILE_LFLIST 1
+#define PROFILE_LFLIST 0
 #define LIST_CHECK_FREQ 0
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 5 : 0
 #define MAX_LOOP 0
@@ -112,11 +112,11 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(n.st >= ABORT || pt(n));
     profile_upd(&cas_ops);
     
-    log(2, "CAS! %:% - % if %, addr:%", f, l, n, *e, a);
+    log(2, "CAS! %:% - % if %, addr:%", f, l, n, e, a);
     flx ne = e;
     atomic_compare_exchange_strong(a, &ne, n);
     /* flx ne = cas2(n, a, e); */
-    log(2, "% %:%- found:% addr:%", eq2(*e, oe)? "WON" : "LOST", f, l, *e, a);
+    log(2, "% %:%- found:% addr:%", eq2(e, ne)? "WON" : "LOST", f, l, e, a);
     
     if((int)(ne.gen - e.gen) < 0)
         SUPER_RARITY("woahverflow");
@@ -237,26 +237,22 @@ err (do_del)(flx a, flx p, type *t){
     return -!del_won;
 }
 
-/* TODO apn check isn't safe without ref */
 err (lflist_enq)(flx a, type *t, lflist *l){
     profile_upd(&enqs);
-    flx ap;
-    for(ap = soft_readx(&pt(a)->p);;){
-        if(ap.gen != a.gen || ap.st == ADD || ap.st == ABORT)
-            return -1;
-        if(ap.st == COMMIT)
-            break;
-        flx apn = pt(ap)->n;
-        if(!eqx(&pt(a)->p, &ap))
-            continue;
-        if(pt(apn) == pt(a))
-            return -1;
-        break;
-    }
     
-    flx oap = ap;
-    for(cnt c = 0; !updx_won(fl(ap, ABORT, a.gen + 1), &pt(a)->p, &ap);
-        assert(++c < 2))
+    flx oap, ap = oap = soft_readx(&pt(a)->p);
+    if(ap.gen != a.gen || ap.st == ADD || ap.st == ABORT)
+        return -1;
+    if(ap.st == RDY){
+        flx apn = pt(ap)->n;
+        if(soft_eqx(&pt(a)->p, &ap)){
+            if(pt(apn) == pt(a))
+                return -1;
+        } else if(!eq2(ap, ((flx){.st=COMMIT, .gen=a.gen})))
+            return -1;
+    }
+        
+    while(!updx_won(fl(oap = ap, ABORT, a.gen + 1), &pt(a)->p, &ap))
         if(ap.gen != a.gen || ap.st != COMMIT)
             return -1;
        
@@ -270,7 +266,6 @@ err (lflist_enq)(flx a, type *t, lflist *l){
         }
     }
 
-    /* TODO: refp */
     flx op = {}, opn = {}, refpp = {}, pn = {}, refp = {};
     flx nil = pt(a)->n = (flx){.nil=1, ADD, mpt(&l->nil), pt(a)->n.gen + 1};
     flx p = soft_readx(&pt(nil)->p);
@@ -279,6 +274,7 @@ err (lflist_enq)(flx a, type *t, lflist *l){
         assert(progress(&op, p, c++) | progress(&opn, pn, 0)))
     {
         muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
+        assert(pt(p) != pt(a));
         pt(a)->p = ap = fl(p, ADD, ap.gen);
         if(updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1), &pt(p)->n, &pn))
             break;

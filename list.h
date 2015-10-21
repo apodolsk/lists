@@ -1,14 +1,16 @@
 #pragma once
 
-typedef struct lanchor{
-    struct lanchor *n;
-    struct lanchor *p;
-} lanchor;
+typedef volatile struct lanchor lanchor;
+
+struct lanchor{
+    lanchor *n;
+    lanchor *p;
+};
 #define LANCHOR(l) {                            \
         (l) ? &((list *) (l))->nil : NULL,      \
         (l) ? &((list *) (l))->nil : NULL}
 
-typedef struct{
+typedef volatile struct{
     lanchor nil;
     uptr size;
 } list;
