@@ -257,6 +257,7 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     {
         muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
         assert(pt(p) != pt(a));
+        /* muste(updx_won(fl(p, ADD, ap.gen), &pt(a)->p, &ap)); */
         pt(a)->p = ap = fl(p, ADD, ap.gen);
         if(updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1), &pt(p)->n, &pn))
             break;
