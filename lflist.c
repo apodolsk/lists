@@ -72,17 +72,6 @@ void (flinref_down)(flx *a, type *t){
 static noinline
 flx readx(volatile flx *x){
     flx r;
-    do{
-        r.gen = atomic_read(&x->gen);
-        r.markp = atomic_read(&x->markp);
-    }while(atomic_read(&x->gen) != r.gen);
-    profile_upd(&reads);
-    return r;
-}
-
-static noinline
-flx soft_readx(volatile flx *x){
-    flx r;
     r.markp = atomic_read(&x->markp);
     r.gen = atomic_read(&x->gen);
     profile_upd(&reads);
@@ -93,13 +82,6 @@ static
 bool eqx(volatile flx *a, flx *b){
     flx old = *b;
     *b = readx(a);
-    return eq2(old, *b);
-}
-
-static
-bool soft_eqx(volatile flx *a, flx *b){
-    flx old = *b;
-    *b = soft_readx(a);
     return eq2(old, *b);
 }
 
@@ -182,7 +164,7 @@ err (refupd)(flx *a, flx *held, volatile flx *src, type *t){
         *held = *a;
         return 0;
     }
-    if(src && soft_eqx(src, a))
+    if(src && eqx(src, a))
         *a = (flx){};
     return -1;
 }
@@ -191,7 +173,7 @@ err (lflist_del)(flx a, type *t){
     profile_upd(&dels);
     assert(!a.nil);
     
-    flx p = soft_readx(&pt(a)->p);
+    flx p = readx(&pt(a)->p);
     if(p.gen != a.gen || p.st >= ABORT)
         return EARG("Early gen abort: %", a);
     return do_del(a, p, t);
@@ -203,7 +185,7 @@ err (do_del)(flx a, flx p, type *t){
     bool del_won = false;
     flx pn = {}, refp = {}, refpp = {};
     
-    flx np, refn = {}, n = soft_readx(&pt(a)->n);
+    flx np, refn = {}, n = readx(&pt(a)->n);
     for(int l = 0;; countloops(l++), profile_upd(&del_restarts)){
         if(help_next(a, &n, &np, &refn, t))
             break;
@@ -240,12 +222,12 @@ err (do_del)(flx a, flx p, type *t){
 err (lflist_enq)(flx a, type *t, lflist *l){
     profile_upd(&enqs);
     
-    flx oap, ap = oap = soft_readx(&pt(a)->p);
+    flx oap, ap = oap = readx(&pt(a)->p);
     if(ap.gen != a.gen || ap.st == ADD || ap.st == ABORT)
         return -1;
     if(ap.st == RDY){
         flx apn = pt(ap)->n;
-        if(soft_eqx(&pt(a)->p, &ap)){
+        if(eqx(&pt(a)->p, &ap)){
             if(pt(apn) == pt(a))
                 return -1;
         } else if(!eq2(ap, ((flx){.st=COMMIT, .gen=a.gen})))
@@ -258,17 +240,17 @@ err (lflist_enq)(flx a, type *t, lflist *l){
        
     if(oap.st != COMMIT){
         profile_upd(&helpful_enqs);
-        flx n = soft_readx(&pt(a)->n);
+        flx n = readx(&pt(a)->n);
         assert(n.st == COMMIT);
         if(pt(n) && !refupd(&n, &(flx){}, &pt(a)->n, t)){
-            finish_del(a, ap, n, soft_readx(&pt(n)->p), t);
+            finish_del(a, ap, n, readx(&pt(n)->p), t);
             flinref_down(&n, t);
         }
     }
 
     flx op = {}, opn = {}, refpp = {}, pn = {}, refp = {};
     flx nil = pt(a)->n = (flx){.nil=1, ADD, mpt(&l->nil), pt(a)->n.gen + 1};
-    flx p = soft_readx(&pt(nil)->p);
+    flx p = readx(&pt(nil)->p);
     for(int c = 0;;
         profile_upd(&enq_restarts),
         assert(progress(&op, p, c++) | progress(&opn, pn, 0)))
@@ -291,13 +273,16 @@ flx (lflist_deq)(type *t, lflist *l){
     profile_upd(&deqs);
     
     flx a = {.nil=1,.pt=mpt(&l->nil)};
-    flx on = {};
+    flx refn = {}, on = {};
     for(cnt lps = 0;;){
-        flx np = {}, n = soft_readx(&pt(a)->n);
-        if(help_next(a, &n, &np, (flx[]){on}, t))
-            EWTF();
-        if(pt(n) == &l->nil || !progress(&on, n, lps++))
-            return flinref_down(&n, t), (flx){};
+        flx np = {}, n = readx(&pt(a)->n);
+        do{
+            if(help_next(a, &n, &np, (flx[]){on}, t))
+                EWTF();
+            if(pt(n) == &l->nil || !progress(&on, n, lps++))
+                return flinref_down(&n, t), (flx){};
+        }while(!eqx(&pt(a)->n, &n));
+            
         if(!do_del(((flx){.pt=n.pt, np.gen}), np, t))
             return (flx){n.mp, np.gen};
     }
@@ -313,9 +298,9 @@ err (finish_del)(flx a, flx p, flx n, flx np, type *t){
        only reference to n reachable from nil. */
     if(pt(np) && np.st == ADD && onp.gen == np.gen){
         profile_upd(&nnp_help_attempts);
-        flx nn = soft_readx(&pt(n)->n);
+        flx nn = readx(&pt(n)->n);
         if(nn.nil && nn.st == ADD){
-            flx nnp = soft_readx(&pt(nn)->p);
+            flx nnp = readx(&pt(nn)->p);
             if(pt(a)->p.gen != a.gen)
                 return -1;
             if(pt(nnp) == pt(a))
@@ -337,7 +322,7 @@ err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
         {
             if(pt(*np) == pt(a) && np->st < ABORT)
                 return 0;
-            if(!soft_eqx(&pt(a)->n, n))
+            if(!eqx(&pt(a)->n, n))
                 break;
             if(n->st == ADD || n->st == COMMIT)
                 return -1;
@@ -358,7 +343,7 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
             goto newp;
         for(cnt pnl = 0;; countloops(pl + pnl++)){
         readp:
-            if(!soft_eqx(&pt(a)->p, p))
+            if(!eqx(&pt(a)->p, p))
                 break;
             if(pt(*pn) != pt(a)){
                 if(!a.nil)
@@ -373,16 +358,16 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
                 return 0;
 
         readpp:;
-            flx pp = soft_readx(&pt(*p)->p);
+            flx pp = readx(&pt(*p)->p);
         newpp:;
             profile_upd(&prev_help_attempts);
             do if(pp.st != RDY)
                    goto readp;
             while(refupd(&pp, refpp, &pt(*p)->p, t));
             
-            flx ppn = soft_readx(&pt(pp)->n), oppn = {};
+            flx ppn = readx(&pt(pp)->n), oppn = {};
             for(cnt ppnl = 0;;progress(&oppn, ppn, pl + pnl + ppnl++)){
-                if(!soft_eqx(&pt(*p)->p, &pp))
+                if(!eqx(&pt(*p)->p, &pp))
                     goto newpp;
                 if(pt(ppn) != pt(*p) && pt(ppn) != pt(a))
                     goto readpp;
@@ -409,7 +394,7 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
             else assert(pt(*p));
         while(refupd(p, refp, &pt(a)->p, t));
 
-        *pn = soft_readx(&pt(*p)->n);
+        *pn = readx(&pt(*p)->n);
     }
 }
 
