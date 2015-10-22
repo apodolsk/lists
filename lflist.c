@@ -248,16 +248,17 @@ err (lflist_enq)(flx a, type *t, lflist *l){
         }
     }
 
+    cnt ngen = pt(a)->n.gen + 1;
     flx op = {}, opn = {}, refpp = {}, pn = {}, refp = {};
-    flx nil = pt(a)->n = (flx){.nil=1, ADD, mpt(&l->nil), pt(a)->n.gen + 1};
+    flx nil = pt(a)->n = (flx){.nil=1, ADD, mpt(&l->nil), ngen};
     flx p = readx(&pt(nil)->p);
     for(int c = 0;;
         profile_upd(&enq_restarts),
         assert(progress(&op, p, c++) | progress(&opn, pn, 0)))
     {
         muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
-        assert(pt(p) != pt(a));
-        /* muste(updx_won(fl(p, ADD, ap.gen), &pt(a)->p, &ap)); */
+        if(pt(a)->n.gen != ngen)
+            return EWTF(), 0;
         pt(a)->p = ap = fl(p, ADD, ap.gen);
         if(updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1), &pt(p)->n, &pn))
             break;
