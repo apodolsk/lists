@@ -207,7 +207,7 @@ err (do_del)(flx a, flx p, type *t){
     }
 
     if(pn_ok == WON && !finish_del(a, p, n, np, t))
-        casx((flx){.st=COMMIT,.gen=a.gen}, &pt(a)->p, p);
+        p = casx((flx){.st=COMMIT,.gen=a.gen}, &pt(a)->p, p);
 
     if(pn_ok == WON) profile_upd(&pn_wins);
     else if(pt(np) == pt(a)) profile_upd(&paborts);
@@ -219,21 +219,30 @@ err (do_del)(flx a, flx p, type *t){
     return -!del_won;
 }
 
+static
+bool flanc_dead(flx a, flx *ap){
+    *ap = readx(&pt(a)->p);
+    if(ap->gen != a.gen || ap->st == ADD || ap->st == ABORT)
+        return false;
+    if(ap->st == RDY){
+        flx apn = pt(*ap)->n;
+        if(eqx(&pt(a)->p, ap)){
+            if(pt(apn) == pt(a))
+                return false;
+        } else if(!eq2(*ap, ((flx){.st=COMMIT, .gen=a.gen})))
+            return false;
+    }
+    return true;
+}
+
 err (lflist_enq)(flx a, type *t, lflist *l){
     profile_upd(&enqs);
     
-    flx oap, ap = oap = readx(&pt(a)->p);
-    if(ap.gen != a.gen || ap.st == ADD || ap.st == ABORT)
+    flx ap;
+    if(!flanc_dead(a, &ap))
         return -1;
-    if(ap.st == RDY){
-        flx apn = pt(ap)->n;
-        if(eqx(&pt(a)->p, &ap)){
-            if(pt(apn) == pt(a))
-                return -1;
-        } else if(!eq2(ap, ((flx){.st=COMMIT, .gen=a.gen})))
-            return -1;
-    }
-        
+
+    flx oap = ap;
     while(!updx_won(fl(oap = ap, ABORT, a.gen + 1), &pt(a)->p, &ap))
         if(ap.gen != a.gen || ap.st != COMMIT)
             return -1;
@@ -271,6 +280,43 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     return 0;
 }
 
+err lflist_jam_upd(uptr n, flx a, type *t){
+    flx p;
+    if(!flanc_dead(a, &p))
+        do_del(a, &p, t);
+
+    do{
+        if(p.gen != a.gen)
+            return -1;
+        if(p.st == ADD)
+            break;
+    } while(!updx_won(rup(p, .gen=n), &pt(a)->p, p));
+    if(p.st == COMMIT || p.st == RDY)
+        return 0;
+
+    flx n = readx(pt(a)->n);
+    if(p.st == ABORT && n.st == COMMIT && eqx(&pt(a)->p, p))
+        return 0;
+
+    for(;;){
+        if(pt(a)->p.gen != a.gen)
+            return -1;
+        if(n.st != ADD)
+            goto del;
+        if(updx_won(rup(n, .gen++), &pt(a)->n, n))
+            break;
+    }
+
+    do_del(a, &p, t);
+    do{
+        if(p.gen != a.gen)
+            
+
+    }(
+    
+    return 0;
+}
+
 flx (lflist_deq)(type *t, lflist *l){
     profile_upd(&deqs);
     
@@ -288,29 +334,6 @@ flx (lflist_deq)(type *t, lflist *l){
         if(!do_del(((flx){.pt=n.pt, np.gen}), np, t))
             return (flx){n.mp, np.gen};
     }
-}
-
-static 
-err (finish_del)(flx a, flx p, flx n, flx np, type *t){
-    flx onp = np;
-    if(pt(np) == pt(a))
-        updx_ok_modst(RDY, RDY, fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
-
-    /* Clean up after an interrupted add of n. In this case, a->n is the
-       only reference to n reachable from nil. */
-    if(pt(np) && np.st == ADD && onp.gen == np.gen){
-        profile_upd(&nnp_help_attempts);
-        flx nn = readx(&pt(n)->n);
-        if(nn.nil && nn.st == ADD){
-            flx nnp = readx(&pt(nn)->p);
-            if(pt(a)->p.gen != a.gen)
-                return -1;
-            if(pt(nnp) == pt(a))
-                casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
-        }
-    }
-
-    return 0;
 }
 
 static 
@@ -398,6 +421,29 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
 
         *pn = readx(&pt(*p)->n);
     }
+}
+
+static 
+err (finish_del)(flx a, flx p, flx n, flx np, type *t){
+    flx onp = np;
+    if(pt(np) == pt(a))
+        updx_ok_modst(RDY, RDY, fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
+
+    /* Clean up after an interrupted add of n. In this case, a->n is the
+       only reference to n reachable from nil. */
+    if(pt(np) && np.st == ADD && onp.gen == np.gen){
+        profile_upd(&nnp_help_attempts);
+        flx nn = readx(&pt(n)->n);
+        if(nn.nil && nn.st == ADD){
+            flx nnp = readx(&pt(nn)->p);
+            if(pt(a)->p.gen != a.gen)
+                return -1;
+            if(pt(nnp) == pt(a))
+                casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
+        }
+    }
+
+    return 0;
 }
 
 flanchor *flptr(flx a){
@@ -558,7 +604,7 @@ void report_lflist_profile(void){
         return;
     cnt ops = enqs + dels + deqs;
     cnt del_ops = dels + deqs;
-    double ideal_reads = (4 * enqs + 5 * dels + 6 * deqs);
+    double ideal_reads = (4 * enqs + 5 * dels + 7 * deqs);
     double ideal_casx = (4 * enqs + 3 * dels + 3 * deqs);
     lppl(0, enqs, 
          (double) enq_restarts/enqs,
