@@ -80,7 +80,8 @@ err lflist_del(flx a, type *t);
 err lflist_enq(flx a, type *t, lflist *l);
 flx lflist_deq(type *t, lflist *l);
 
-err lflist_jam_enq(flx a);
+err lflist_jam_upd(flx a, uptr ng, type *t);
+err lflist_jam(flx a, type *t);
 
 flx lflist_peek(lflist *l);
 flx lflist_next(flx p, lflist *l);

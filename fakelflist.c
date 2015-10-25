@@ -81,6 +81,20 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     return 0;
 }
 
+err (lflist_jam)(flx a, type *t){
+    for(stx ax = a.a->stx;;){
+        if(ax.gen != a.gen)
+            return -1;
+        if(ax.host){
+            lflist_del(a, t);
+            ax = a.a->stx;
+            continue;
+        }
+        if(!cas2_won(((stx){a.gen + 1, NULL}), &a.a->stx, &ax))
+            return 0;
+    }
+}
+
 void report_lflist_profile(void){}
  
 #endif

@@ -4,7 +4,7 @@
 
 #define MODULE LFLISTM
 
-#define E_LFLISTM 1, BRK, LVL_TODO
+#define E_LFLISTM 0, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -19,7 +19,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 
 #define PROFILE_LFLIST 0
 #define LIST_CHECK_FREQ 0
-#define FLANC_CHECK_FREQ E_DBG_LVL ? 100 : 0
+#define FLANC_CHECK_FREQ E_DBG_LVL ? 0 : 0
 #define MAX_LOOP 0
 
 #define ADD FL_ADD
@@ -30,7 +30,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 static err help_next(flx a, flx *n, flx *np, flx *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t);
 static err finish_del(flx a, flx p, flx n, flx np, type *t);
-static err do_del(flx a, flx p, type *t);
+static err do_del(flx a, flx *p, type *t);
 
 #define help_next(as...) trace(LFLISTM, 3, help_next, as)
 #define help_prev(as...) trace(LFLISTM, 3, help_prev, as)
@@ -74,7 +74,6 @@ static noinline
 flx readx(volatile flx *x){
     flx r;
     r.markp = atomic_read(&x->markp);
-    race(9000, 10, 2);
     r.gen = atomic_read(&x->gen);
     profile_upd(&reads);
     return r;
@@ -101,7 +100,7 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     atomic_compare_exchange_strong(a, &ne, n);
     /* flx ne = cas2(n, a, e); */
     if(eq2(e, ne))
-        log(0, "% %:%- found:% addr:%", eq2(e, ne)? "WON" : "LOST", f, l, e, a);
+        log(2, "% %:%- found:% addr:%", eq2(e, ne)? "WON" : "LOST", f, l, e, a);
     
     if((int)(ne.gen - e.gen) < 0)
         SUPER_RARITY("woahverflow");
@@ -179,11 +178,11 @@ err (lflist_del)(flx a, type *t){
     flx p = readx(&pt(a)->p);
     if(p.gen != a.gen || p.st >= ABORT)
         return EARG("Early gen abort: %", a);
-    return do_del(a, p, t);
+    return do_del(a, &p, t);
 }
 
 static
-err (do_del)(flx a, flx p, type *t){
+err (do_del)(flx a, flx *p, type *t){
     howok pn_ok = NOT;
     bool del_won = false;
     flx pn = {}, refp = {}, refpp = {};
@@ -193,7 +192,7 @@ err (do_del)(flx a, flx p, type *t){
         if(help_next(a, &n, &np, &refn, t))
             break;
         assert(pt(np) == pt(a));
-        if(help_prev(a, &p, &pn, &refp, &refpp, t))
+        if(help_prev(a, p, &pn, &refp, &refpp, t))
             break;
         assert(pt(pn) == pt(a) && (pn.st == RDY || pn.st == ABORT));
 
@@ -204,25 +203,17 @@ err (do_del)(flx a, flx p, type *t){
         case OK: break;
         }
 
-        pn_ok = updx_ok(fl(n, pn.st, pn.gen + 1), &pt(p)->n, &pn);
+        pn_ok = updx_ok(fl(n, pn.st, pn.gen + 1), &pt(*p)->n, &pn);
         if(pn_ok)
             break;
     }
 
-    if(pn_ok == WON && !finish_del(a, p, n, np, t))
-        p = casx((flx){.st=COMMIT,.gen=a.gen}, &pt(a)->p, p);
+    if(pn_ok == WON && !finish_del(a, *p, n, np, t))
+        *p = casx((flx){.st=COMMIT,.gen=a.gen}, &pt(a)->p, *p);
 
     if(pn_ok == WON) profile_upd(&pn_wins);
     else if(pt(np) == pt(a)) profile_upd(&paborts);
     else if(pt(np) != pt(a)) profile_upd(&naborts);
-
-
-    /* assert(!pt(p = pt(a)->p) */
-    /*        || pt(pt(p)->n) != pt(a) */
-    /*        || pt(a)->p.gen != a.gen); */
-    /* assert(!pn_ok */
-    /*        || (pt(pt(a)->n) == pt(n) && pt(a)->n.st == COMMIT) */
-    /*        || pt(a)->p.gen != a.gen); */
         
     flinref_down(&refn, t);
     flinref_down(&refp, t);
@@ -277,10 +268,10 @@ err (lflist_enq)(flx a, type *t, lflist *l){
         assert(progress(&op, p, c++) | progress(&opn, pn, 0)))
     {
         muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
-        /* if(pt(a)->n.gen != ngen) */
-        /*     return EWTF(), 0; */
-        pt(a)->p = ap = fl(p, ADD, ap.gen);
-        /* must(updx_ok(fl(p, ADD, ap.gen), &pt(a)->p, &ap)); */
+        if(pt(a)->n.gen != ngen)
+            return EWTF(), 0;
+        /* pt(a)->p = ap = fl(p, ADD, ap.gen); */
+        must(upd2_ok(fl(p, ADD, ap.gen), &pt(a)->p, &ap));
         if(updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1), &pt(p)->n, &pn))
             break;
     }
@@ -292,39 +283,41 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     return 0;
 }
 
-err lflist_jam_upd(uptr n, flx a, type *t){
-    /* flx p; */
-    /* if(!flanc_dead(a, &p)) */
-    /*     do_del(a, &p, t); */
+err (lflist_jam)(flx a, type *t){
+    return lflist_jam_upd(a, a.gen + 1, t);
+}
 
-    /* do{ */
-    /*     if(p.gen != a.gen) */
-    /*         return -1; */
-    /*     if(p.st == ADD) */
-    /*         break; */
-    /* } while(!updx_won(rup(p, .gen=n), &pt(a)->p, p)); */
-    /* if(p.st == COMMIT || p.st == RDY) */
-    /*     return 0; */
+err (lflist_jam_upd)(flx a, uptr ng, type *t){
+    flx p;
+    do_del(a, &p, t);
 
-    /* flx n = readx(pt(a)->n); */
-    /* if(p.st == ABORT && n.st == COMMIT && eqx(&pt(a)->p, p)) */
-    /*     return 0; */
+    for(;;){
+        if(p.gen != a.gen)
+            return -1;
+        if(p.st == ADD)
+            break;
+        if(updx_won(rup(p, .gen=ng), &pt(a)->p, &p))
+            return 0;
+    }
 
-    /* for(;;){ */
-    /*     if(pt(a)->p.gen != a.gen) */
-    /*         return -1; */
-    /*     if(n.st != ADD) */
-    /*         goto del; */
-    /*     if(updx_won(rup(n, .gen++), &pt(a)->n, n)) */
-    /*         break; */
-    /* } */
+    for(flx n = readx(&pt(a)->n);;){
+        if(pt(a)->p.gen != a.gen)
+            return -1;
+        if(n.st != ADD)
+            break;
+        if(updx_won(rup(n, .gen++), &pt(a)->n, &n))
+            break;
+    }
 
-    /* do_del(a, &p, t); */
-    /* do{ */
-    /*     if(p.gen != a.gen) */
-            
+    do_del(a, &p, t);
 
-    /* }( */
+    for(;;){
+        if(p.gen != a.gen)
+            return -1;
+        assert(p.st == ADD);
+        if(updx_won(rup(p, .gen=ng), &pt(a)->p, &p))
+            return 0;
+    }
     
     return 0;
 }
@@ -343,7 +336,7 @@ flx (lflist_deq)(type *t, lflist *l){
                 return flinref_down(&n, t), (flx){};
         }while(!eqx(&pt(a)->n, &n));
             
-        if(!do_del(((flx){.pt=n.pt, np.gen}), np, t))
+        if(!do_del(((flx){.pt=n.pt, np.gen}), &np, t))
             return (flx){n.mp, np.gen};
     }
 }
