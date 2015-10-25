@@ -4,7 +4,7 @@
 
 #define MODULE LFLISTM
 
-#define E_LFLISTM 0, BRK, LVL_TODO
+#define E_LFLISTM 1, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -69,10 +69,12 @@ void (flinref_down)(flx *a, type *t){
     *a = (flx){};
 }
 
+#include <race.h>
 static noinline
 flx readx(volatile flx *x){
     flx r;
     r.markp = atomic_read(&x->markp);
+    race(9000, 10, 2);
     r.gen = atomic_read(&x->gen);
     profile_upd(&reads);
     return r;
@@ -266,9 +268,10 @@ err (lflist_enq)(flx a, type *t, lflist *l){
         assert(progress(&op, p, c++) | progress(&opn, pn, 0)))
     {
         muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
-        if(pt(a)->n.gen != ngen)
-            return EWTF(), 0;
-        pt(a)->p = ap = fl(p, ADD, ap.gen);
+        /* if(pt(a)->n.gen != ngen) */
+        /*     return EWTF(), 0; */
+        /* pt(a)->p = ap = fl(p, ADD, ap.gen); */
+        ap = cas2(fl(p, ADD, ap.gen), &pt(a)->p, ap);
         if(updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1), &pt(p)->n, &pn))
             break;
     }
@@ -281,38 +284,38 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 }
 
 err lflist_jam_upd(uptr n, flx a, type *t){
-    flx p;
-    if(!flanc_dead(a, &p))
-        do_del(a, &p, t);
+    /* flx p; */
+    /* if(!flanc_dead(a, &p)) */
+    /*     do_del(a, &p, t); */
 
-    do{
-        if(p.gen != a.gen)
-            return -1;
-        if(p.st == ADD)
-            break;
-    } while(!updx_won(rup(p, .gen=n), &pt(a)->p, p));
-    if(p.st == COMMIT || p.st == RDY)
-        return 0;
+    /* do{ */
+    /*     if(p.gen != a.gen) */
+    /*         return -1; */
+    /*     if(p.st == ADD) */
+    /*         break; */
+    /* } while(!updx_won(rup(p, .gen=n), &pt(a)->p, p)); */
+    /* if(p.st == COMMIT || p.st == RDY) */
+    /*     return 0; */
 
-    flx n = readx(pt(a)->n);
-    if(p.st == ABORT && n.st == COMMIT && eqx(&pt(a)->p, p))
-        return 0;
+    /* flx n = readx(pt(a)->n); */
+    /* if(p.st == ABORT && n.st == COMMIT && eqx(&pt(a)->p, p)) */
+    /*     return 0; */
 
-    for(;;){
-        if(pt(a)->p.gen != a.gen)
-            return -1;
-        if(n.st != ADD)
-            goto del;
-        if(updx_won(rup(n, .gen++), &pt(a)->n, n))
-            break;
-    }
+    /* for(;;){ */
+    /*     if(pt(a)->p.gen != a.gen) */
+    /*         return -1; */
+    /*     if(n.st != ADD) */
+    /*         goto del; */
+    /*     if(updx_won(rup(n, .gen++), &pt(a)->n, n)) */
+    /*         break; */
+    /* } */
 
-    do_del(a, &p, t);
-    do{
-        if(p.gen != a.gen)
+    /* do_del(a, &p, t); */
+    /* do{ */
+    /*     if(p.gen != a.gen) */
             
 
-    }(
+    /* }( */
     
     return 0;
 }
