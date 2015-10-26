@@ -118,5 +118,6 @@ const char *flstatestr(flstate s){
 #define lflist_deq(as...)                       \
     linref_account(flptr(account_expr) ? 1 : 0, trace(LFLISTM, 2, lflist_deq, as))
 #define lflist_enq(as...) linref_account(0, trace(LFLISTM, 1, lflist_enq, as))
+#define lflist_jam(as...) linref_account(0, trace(LFLISTM, 1, lflist_jam, as))
 #define lflist_peek(as...) trace(LFLISTM, 2, lflist_peek, as)
 #define lflist_next(as...) trace(LFLISTM, 2, lflist_next, as)

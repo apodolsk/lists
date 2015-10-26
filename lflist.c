@@ -19,7 +19,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 
 #define PROFILE_LFLIST 0
 #define LIST_CHECK_FREQ 0
-#define FLANC_CHECK_FREQ E_DBG_LVL ? 100 : 0
+#define FLANC_CHECK_FREQ E_DBG_LVL ? 10 : 0
 #define MAX_LOOP 0
 
 #define ADD FL_ADD
@@ -244,44 +244,57 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     if(!flanc_dead(a, &ap))
         return -1;
 
+    flx n = readx(&pt(a)->n);
     flx oap = ap;
     while(!updx_won(fl(oap = ap, ABORT, a.gen + 1), &pt(a)->p, &ap))
         if(ap.gen != a.gen || ap.st != COMMIT)
             return -1;
-       
-    if(oap.st != COMMIT){
+
+    assert(n.st == COMMIT || n.st == ADD);
+
+    if(oap.st != COMMIT && n.st == COMMIT){
         profile_upd(&helpful_enqs);
-        flx n = readx(&pt(a)->n);
-        assert(n.st == COMMIT);
         if(pt(n) && !refupd(&n, &(flx){}, &pt(a)->n, t)){
+            flx np = readx(&pt(n)->p);
+            if(pt(a)->p.gen != ap.gen)
+                return ppl(0, "p"), flinref_down(&n, t), -1;
             finish_del(a, ap, n, readx(&pt(n)->p), t);
             flinref_down(&n, t);
         }
     }
+    
+    flx nil = {.nil=1, ADD, mpt(&l->nil), n.gen + 1};
 
-    cnt ngen = pt(a)->n.gen + 1;
+    while(!updx_won(fl(nil, ADD, n.gen + 1), &pt(a)->n, &n))
+        if(n.st != COMMIT || !eqx(&pt(a)->p, &ap))
+            return ppl(0, "n"), -1;
+
     flx op = {}, opn = {}, refpp = {}, pn = {}, refp = {};
-    flx nil = pt(a)->n = (flx){.nil=1, ADD, mpt(&l->nil), ngen};
     flx p = readx(&pt(nil)->p);
+    bool won = false;
     for(int c = 0;;
         profile_upd(&enq_restarts),
         assert(progress(&op, p, c++) | progress(&opn, pn, 0)))
     {
         muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
-        if(pt(a)->n.gen != ngen)
-            return -1;
         /* pt(a)->p = ap = fl(p, ADD, ap.gen); */
         if(!upd2_won(fl(p, ADD, ap.gen), &pt(a)->p, &ap))
-            return -1;
-        if(updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1), &pt(p)->n, &pn))
+            break;
+        if(pt(a)->n.gen != n.gen)
+            break;
+        if((won = updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1),
+                           &pt(p)->n,
+                           &pn)))
             break;
     }
-    casx(fl(a, RDY, p.gen + 1), &l->nil.p, p);
-    casx(fl(p, RDY, ap.gen), &pt(a)->p, ap);
+    if(won){
+        casx(fl(a, RDY, p.gen + 1), &l->nil.p, p);
+        casx(fl(p, RDY, ap.gen), &pt(a)->p, ap);
+    }
     
     flinref_down(&p, t);
     flinref_down(&refpp, t);
-    return 0;
+    return -!won;
 }
 
 err (lflist_jam)(flx a, type *t){
@@ -290,16 +303,18 @@ err (lflist_jam)(flx a, type *t){
 
 err (lflist_jam_upd)(flx a, uptr ng, type *t){
     flx p;
-    if(!flanc_dead(a, &p))
-        do_del(a, &p, t);
-
     for(;;){
+        if(!flanc_dead(a, &p))
+            do_del(a, &p, t);
         if(p.gen != a.gen)
             return -1;
         if(p.st == ADD)
             break;
-        /* TODO: can't tell if finish_del is necessary once ABORT is set. */
-        if(updx_won(rup(p, .st= (p.st == ABORT ? RDY : p.st), .gen=ng),
+        if(updx_won(rup(p,
+                        .gen = ng,
+                        .st = (p.st != ABORT
+                               ? p.st
+                               : (pt(p) ? RDY : COMMIT))),
                     &pt(a)->p, &p))
             return 0;
     }
@@ -450,8 +465,6 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
 
 static 
 err (finish_del)(flx a, flx p, flx n, flx np, type *t){
-    assert(n.st == COMMIT);
-    
     flx onp = np;
     if(pt(np) == pt(a))
         updx_ok_modst(RDY, RDY, fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
