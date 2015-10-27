@@ -4,7 +4,7 @@
 
 #define MODULE LFLISTM
 
-#define E_LFLISTM 1, BRK, LVL_TODO
+#define E_LFLISTM 0, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -222,7 +222,7 @@ err (do_del)(flx a, flx *p, type *t){
 }
 
 static
-bool flanc_dead(flx a, flx *ap){
+bool flanc_enqable(flx a, flx *ap){
     *ap = readx(&pt(a)->p);
     if(ap->gen != a.gen || ap->st == ADD || ap->st == ABORT)
         return false;
@@ -241,7 +241,7 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     profile_upd(&enqs);
     
     flx ap;
-    if(!flanc_dead(a, &ap))
+    if(!flanc_enqable(a, &ap))
         return -1;
 
     flx n = readx(&pt(a)->n);
@@ -257,17 +257,16 @@ err (lflist_enq)(flx a, type *t, lflist *l){
         if(pt(n) && !refupd(&n, &(flx){}, &pt(a)->n, t)){
             flx np = readx(&pt(n)->p);
             if(pt(a)->p.gen != ap.gen)
-                return ppl(0, "p"), flinref_down(&n, t), -1;
+                return flinref_down(&n, t), -1;
             finish_del(a, ap, n, readx(&pt(n)->p), t);
             flinref_down(&n, t);
         }
     }
     
     flx nil = {.nil=1, ADD, mpt(&l->nil), n.gen + 1};
-
     while(!updx_won(fl(nil, ADD, n.gen + 1), &pt(a)->n, &n))
         if(!eqx(&pt(a)->p, &ap))
-            return ppl(0, "n"), -1;
+            return -1;
 
     flx op = {}, opn = {}, refpp = {}, pn = {}, refp = {};
     flx p = readx(&pt(nil)->p);
@@ -278,10 +277,12 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     {
         muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
         /* pt(a)->p = ap = fl(p, ADD, ap.gen); */
-        if(!upd2_won(fl(p, ADD, ap.gen), &pt(a)->p, &ap))
+        if(!upd2_won(fl(p, ADD, ap.gen), &pt(a)->p, &ap)){
             break;
-        if(pt(a)->n.gen != n.gen)
+        }
+        if(pt(a)->n.gen != n.gen){
             break;
+        }
         if((won = updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1),
                            &pt(p)->n,
                            &pn)))
@@ -304,7 +305,7 @@ err (lflist_jam)(flx a, type *t){
 err (lflist_jam_upd)(flx a, uptr ng, type *t){
     flx p;
     for(;;){
-        if(!flanc_dead(a, &p))
+        if(!flanc_enqable(a, &p))
             do_del(a, &p, t);
         if(p.gen != a.gen)
             return -1;
@@ -326,34 +327,45 @@ err (lflist_jam_upd)(flx a, uptr ng, type *t){
           !updx_won(rup(n, .gen++), &pt(a)->n, &n));
 
     /* TODO: could probably avoid loops here. */
-    /* TODO: refs */
-    if(n.st == ADD)
-        for(flx pn;;){
-            if(p.gen != a.gen)
-                return -1;
-            if(p.st != ADD)
+    flx pn;
+    for(;n.st == ADD;){
+        if(p.gen != a.gen)
+            return -1;
+        if(p.st != ADD)
+            break;
+        pn = readx(&pt(p)->n);
+        flx np = readx(&pt(n)->p);
+        if(!eqx(&pt(a)->p, &p))
+            continue;
+        if(pt(pn) == pt(a)){
+            if(pt(np) == pt(a) ||
+               updx_ok(fl(a, RDY, np.gen), &pt(n)->p, &np))
                 break;
-            pn = readx(&pt(p)->n);
-            if(!eqx(&pt(a)->p, &p))
-                continue;
-            if(pt(pn) == pt(a)){
-                flx np = readx(&pt(n)->p);
-                if(!eqx(&pt(a)->n, &n))
-                    continue;
-                if(pt(np) == pt(a) ||
-                   updx_ok(fl(a, RDY, np.gen), &pt(n)->p, &np))
-                    break;
-                continue;
-            }
-            if(updx_ok(rup(pn, .gen++), &pt(p)->n, &pn))
-                break;
+            continue;
         }
+        if(pt(np) != pt(p) || pt(pn) != pt(n) || pn.st == COMMIT)
+            break;
+        if(updx_ok(rup(pn, .gen++), &pt(p)->n, &pn))
+            break;
+    }
 
-    do_del(a, &p, t);
+    if(n.st != ADD || pt(pn) == pt(a) || p.st != ADD)
+        if(do_del(a, &p, t)){
+            n = readx(&pt(a)->n);
+            if(pt(n) && !refupd(&n, &(flx){}, &pt(a)->n, t)){
+                flx np = readx(&pt(n)->p);
+                if(pt(a)->p.gen != a.gen)
+                    return flinref_down(&n, t), -1;
+                finish_del(a, p, n, readx(&pt(n)->p), t);
+                flinref_down(&n, t);
+            }
+        }
 
     while(p.gen == a.gen)
         if(updx_won(rup(p, .st=COMMIT, .gen=ng), &pt(a)->p, &p))
             return 0;
+        else
+            assert(p.st != ABORT || p.gen != a.gen);
     return -1;
 }
 
@@ -518,7 +530,8 @@ bool flanchor_valid(flx ax){
     return true;
 }
 
-/* TODO: printf isn't reentrant. Either no printf/fflush.  */
+/* TODO: printf isn't reentrant. Watch CPU usage for deadlock upon assert
+   print failure.  */
 static
 bool _flanchor_valid(flx ax, flx *retn, lflist **on){
     flanchor *volatile a = pt(ax);
@@ -585,7 +598,6 @@ bool _flanchor_valid(flx ax, flx *retn, lflist **on){
         assert(pn != a && (nx.st == COMMIT || nx.st == ADD));
         break;
     case COMMIT:
-        assert(nx.st == COMMIT);
         assert(pn != a);
         assert(np != a);
         assert(!nn || pt(nn->p) != a);

@@ -90,7 +90,7 @@ err (lflist_jam)(flx a, type *t){
             ax = a.a->stx;
             continue;
         }
-        if(!cas2_won(((stx){a.gen + 1, NULL}), &a.a->stx, &ax))
+        if(cas2_won(((stx){a.gen + 1, NULL}), &a.a->stx, &ax))
             return 0;
     }
 }
