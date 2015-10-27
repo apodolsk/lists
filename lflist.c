@@ -266,7 +266,7 @@ err (lflist_enq)(flx a, type *t, lflist *l){
     flx nil = {.nil=1, ADD, mpt(&l->nil), n.gen + 1};
 
     while(!updx_won(fl(nil, ADD, n.gen + 1), &pt(a)->n, &n))
-        if(n.st != COMMIT || !eqx(&pt(a)->p, &ap))
+        if(!eqx(&pt(a)->p, &ap))
             return ppl(0, "n"), -1;
 
     flx op = {}, opn = {}, refpp = {}, pn = {}, refp = {};
