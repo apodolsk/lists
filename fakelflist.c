@@ -15,13 +15,13 @@ static pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
 static
 void lock_lflist(lflist *l){
     fuzz_atomics();
-    pthread_mutex_lock(&l->mut);
+    pthread_mutex_lock((pthread_mutex_t *) &l->mut);
 }
 
 static
 void unlock_lflist(lflist *l){
     fuzz_atomics();
-    pthread_mutex_unlock(&l->mut);
+    pthread_mutex_unlock((pthread_mutex_t *) &l->mut);
 }
 
 flx flx_of(flanchor *a){
@@ -68,11 +68,15 @@ flx (lflist_deq)(type *t, lflist *l){
 }
 
 err (lflist_enq)(flx a, type *t, lflist *l){
+    return lflist_enq_upd(a.gen + 1, a, t, l);
+}
+
+err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     (void) t;
     if(a.a->gen != a.gen)
         return -1;
     lock_lflist(l);
-    if(!cas2_won(((stx){a.gen + 1, l}), &a.a->stx, (&(stx){a.gen, NULL})))
+    if(!cas2_won(((stx){ng, l}), &a.a->stx, (&(stx){a.gen, NULL})))
         return unlock_lflist(l), -1;
     list_enq(&a.a->lanc, &l->l);
     assert(a.a->host == l);
@@ -82,6 +86,10 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 }
 
 err (lflist_jam)(flx a, type *t){
+    return lflist_jam_upd(a.gen + 1, a, t);
+}
+
+err (lflist_jam_upd)(uptr ng, flx a, type *t){
     for(stx ax = a.a->stx;;){
         if(ax.gen != a.gen)
             return -1;
@@ -90,7 +98,7 @@ err (lflist_jam)(flx a, type *t){
             ax = a.a->stx;
             continue;
         }
-        if(cas2_won(((stx){a.gen + 1, NULL}), &a.a->stx, &ax))
+        if(cas2_won(((stx){ng, NULL}), &a.a->stx, &ax))
             return 0;
     }
 }

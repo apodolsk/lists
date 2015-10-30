@@ -8,7 +8,6 @@
 
 typedef struct flx flx;
 typedef volatile struct flanchor flanchor;
-typedef union mptr mptr;
 typedef enum flstate flstate;
 
 typedef struct markp{
@@ -26,7 +25,7 @@ struct flx{
     union {
         flanchor *mp;
         markp;
-        /* Standard C (6.6) doesn't support casting addresses in constant
+        /* C11 (6.6) doesn't require casting addresses in constant
            expressions. GCC/CLANG do as an undocumented extension, but no
            computation from a cast may be truncated (as it would be if
            writing .pt). The only documentation of this is a mailing list
@@ -49,6 +48,14 @@ struct flanchor{
 #define FLANCHOR(list)                                \
     {.n.constexp = (list) ? 1 + (FL_RDY << 1) + (uptr) (list) : FL_COMMIT << 1, \
      .p.constexp = (list) ? 1 + (FL_RDY << 1) + (uptr) (list) : FL_COMMIT << 1}
+
+/* TODO: combine with above */
+#define FLANCHOR_GEN(_gen)                                              \
+    {.n.constexp = FL_COMMIT << 1,                                      \
+     .n.gen = gen,                                                      \
+     .p.constexp = FL_COMMIT << 1,                                      \
+     .p.gen = gen}
+
 CASSERT(offsetof(list, nil) == 0);
 
 typedef volatile struct lflist{
@@ -65,23 +72,14 @@ typedef volatile struct lflist{
 flx flx_of(flanchor *a);
 flanchor *flptr(flx a);
 
-/* Iff !ret and no subseqent call to lflist_enq(a, ..) has been made, then
-   lflist_enq(a, t, ..) == 0, and for all flx x | flptr(x) == flptr(a), 0
-   != lflist_del(x, ..), and x != lflist_deq(..).
-
-   If ret, then 0 != lflist_del(a, ..) and a != lflist_deq(..). */
 err lflist_del(flx a, type *t);
 
-/* TODO: fuck this */
-/* Iff !ret and lflist_del(a, t) hasn't been called and lflist_deq hasn't
-   returned a, then a == lflist_deq(t, l)) for the n'th subsequent call to
-   lflist_deq where n > the number of times lflist_enq(.., l) had been
-   called and 0 == lflist_del(a, t). */
 err lflist_enq(flx a, type *t, lflist *l);
 flx lflist_deq(type *t, lflist *l);
-
-err lflist_jam_upd(flx a, uptr ng, type *t);
 err lflist_jam(flx a, type *t);
+
+err lflist_jam_upd(uptr ng, flx a, type *t);
+err lflist_enq_upd(uptr ng, flx a, type *t, lflist *l);
 
 flx lflist_peek(lflist *l);
 flx lflist_next(flx p, lflist *l);
@@ -113,6 +111,13 @@ const char *flstatestr(flstate s){
 #ifndef LOG_LFLISTM
 #define LOG_LFLISTM 0
 #endif
+
+#define lflist_jam_upd(ng, a, t)                                        \
+    linref_account(0, trace(LFLISTM, 1, lflist_jam_upd, PUN(uptr, ng), a, t))
+
+#define lflist_enq_upd(ng, a, t, l)                                     \
+    linref_account(0, trace(LFLISTM, 1, lflist_enq_upd, PUN(uptr, ng), a, t, l))
+
 
 #define lflist_del(as...) linref_account(0, trace(LFLISTM, 1, lflist_del, as))
 #define lflist_deq(as...)                       \

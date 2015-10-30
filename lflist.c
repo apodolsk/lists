@@ -238,6 +238,10 @@ bool flanc_enqable(flx a, flx *ap){
 }
 
 err (lflist_enq)(flx a, type *t, lflist *l){
+    return lflist_enq_upd(a.gen + 1, a, t, l);
+}
+
+err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     profile_upd(&enqs);
     
     flx ap;
@@ -246,7 +250,7 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 
     flx n = readx(&pt(a)->n);
     flx oap = ap;
-    while(!updx_won(fl(oap = ap, ABORT, a.gen + 1), &pt(a)->p, &ap))
+    while(!updx_won(fl(oap = ap, ABORT, ng), &pt(a)->p, &ap))
         if(ap.gen != a.gen || ap.st != COMMIT)
             return -1;
 
@@ -299,10 +303,10 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 }
 
 err (lflist_jam)(flx a, type *t){
-    return lflist_jam_upd(a, a.gen + 1, t);
+    return lflist_jam_upd(a.gen + 1, a, t);
 }
 
-err (lflist_jam_upd)(flx a, uptr ng, type *t){
+err (lflist_jam_upd)(uptr ng, flx a, type *t){
     flx p;
     for(;;){
         if(!flanc_enqable(a, &p))
