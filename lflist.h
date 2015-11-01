@@ -66,9 +66,12 @@ typedef volatile struct lflist{
 }lflist;
 #define LFLIST(l, elem)                                                 \
     {{.n = {.constexp =                                     \
-            (elem) ? 2 + (uptr) (elem) : 3 + (uptr) (l)},         \
+            (elem) ? 2 + (uptr) (elem) : 3 + (uptr) (l),    \
+            .validity = FLANC_VALID},                       \
       .p = {.constexp =                                     \
-            (elem) ? 2 + (uptr) (elem) : 3 + (uptr) (l)}}}
+            (elem) ? 2 + (uptr) (elem) : 3 + (uptr) (l),    \
+            .validity = FLANC_VALID},                       \
+    }}
 
 #endif  /* FAKELOCKFREE */
 
@@ -102,8 +105,8 @@ const char *flstatestr(flstate s){
     return (const char *[]){"ADD", "RDY", "ABORT", "COMMIT"}[s];
 }
 
-#define pudef (flx, "{%:%:%, %}", (void *)(uptr)(a->pt << 3), (uptr) a->nil, \
-               flstatestr(a->st), a->gen)
+#define pudef (flx, "{%:%:%, %:%}", (void *)(uptr)(a->pt << 3), (uptr) a->nil, \
+               flstatestr(a->st), (uptr) a->gen, (uptr) a->validity)
 #include <pudef.h>
 #define pudef (flanchor, "n:%, p:%", a->n, a->p)
 #include <pudef.h>
