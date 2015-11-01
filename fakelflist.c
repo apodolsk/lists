@@ -32,6 +32,8 @@ flanchor *flptr(flx a){
     return a.a;
 }
 
+/* TODO: lock_lflist may segfault in segalloc. As with lflist, need
+   validity bits. */
 err (lflist_del)(flx a, type *t){
     (void) t;
     lflist *l;
