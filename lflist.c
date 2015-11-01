@@ -45,7 +45,7 @@ flanchor *pt(flx a){
 
 static inline
 flx fl(flx p, flstate s, uptr gen){
-    return (flx){.nil=p.nil, .st=s, .pt=p.pt, gen};
+    return (flx){.nil=p.nil, .st=s, .pt=p.pt, .gen=gen};
 }
 
 static inline
@@ -74,7 +74,9 @@ static noinline
 flx readx(volatile flx *x){
     flx r;
     r.markp = atomic_read(&x->markp);
-    r.gen = atomic_read(&x->gen);
+    r.markgen = atomic_read(&x->markgen);
+    if(r.validity != FLANC_VALID)
+        r = (flx){.st = COMMIT};
     profile_upd(&reads);
     return r;
 }
@@ -91,6 +93,7 @@ bool eqx(volatile flx *a, flx *b){
 static
 flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!eq2(n, e));
+    assert(n.validity = FLANC_VALID);
     assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
     assert(n.st >= ABORT || pt(n));
     profile_upd(&cas_ops);
@@ -387,8 +390,8 @@ flx (lflist_deq)(type *t, lflist *l){
                 return flinref_down(&n, t), (flx){};
         }while(!eqx(&pt(a)->n, &n));
             
-        if(!do_del(((flx){.pt=n.pt, np.gen}), (flx[]){np}, t))
-            return (flx){n.mp, np.gen};
+        if(!do_del(((flx){.pt=n.pt, .gen=np.gen}), (flx[]){np}, t))
+            return (flx){.pt=n.pt, .gen=np.gen};
     }
 }
 
@@ -506,14 +509,14 @@ flanchor *flptr(flx a){
 }
 
 flx flx_of(flanchor *a){
-    return (flx){.pt = mpt(a), a->p.gen};
+    return (flx){.pt = mpt(a), .gen = a->p.gen};
 }
 
 void flanchor_ordered_init(flanchor *a, uptr g){
     a->n.markp = (markp){.st=FL_COMMIT};
     a->p.markp = (markp){.st=FL_COMMIT};
-    a->n.gen = g;
-    a->p.gen = g;
+    a->n.markgen = (markgen){g};
+    a->p.markgen = (markgen){g};
 }
 
 static bool _flanchor_valid(flx ax, flx *retn, lflist **on);
@@ -609,6 +612,7 @@ bool _flanchor_valid(flx ax, flx *retn, lflist **on){
         assert(pn != a && (nx.st == COMMIT || nx.st == ADD));
         break;
     case COMMIT:
+        EWTF("should have !p");
         assert(pn != a);
         assert(np != a);
         assert(!nn || pt(nn->p) != a);

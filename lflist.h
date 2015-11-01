@@ -21,8 +21,15 @@ typedef struct markp{
     uptr pt:WORDBITS-3;
 } markp;
 
+#define FLANC_VALID 0b10
+typedef struct{
+    uptr validity: 2;
+    uptr gen: WORDBITS - 2;
+} markgen;
+
 struct flx{
     union {
+        /* Only useful for gdb. */
         flanchor *mp;
         markp;
         /* C11 (6.6) doesn't require casting addresses in constant
@@ -36,7 +43,7 @@ struct flx{
            LFLIST(). */
         uptr constexp;
     };
-    uptr gen;
+    markgen;
 } align(sizeof(dptr));
 #define mpt(flanc) ((uptr) (flanc) >> 3)
 #define FLX(as...) ((flx){as})
@@ -45,16 +52,12 @@ struct flanchor{
     volatile flx n;
     volatile flx p;
 };
-#define FLANCHOR(list)                                \
+#define FLANCHOR(list)                                                  \
     {.n.constexp = (list) ? 1 + (FL_RDY << 1) + (uptr) (list) : FL_COMMIT << 1, \
-     .p.constexp = (list) ? 1 + (FL_RDY << 1) + (uptr) (list) : FL_COMMIT << 1}
-
-/* TODO: combine with above */
-#define FLANCHOR_GEN(_gen)                                              \
-    {.n.constexp = FL_COMMIT << 1,                                      \
-     .n.gen = gen,                                                      \
-     .p.constexp = FL_COMMIT << 1,                                      \
-     .p.gen = gen}
+     .n.validity = FLANC_VALID,                                                 \
+     .p.constexp = (list) ? 1 + (FL_RDY << 1) + (uptr) (list) : FL_COMMIT << 1, \
+     .p.validity = FLANC_VALID,                                                 \
+            }
 
 CASSERT(offsetof(list, nil) == 0);
 
