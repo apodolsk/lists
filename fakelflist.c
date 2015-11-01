@@ -80,7 +80,7 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
         return unlock_lflist(l), -1;
     list_enq(&a.a->lanc, &l->l);
     assert(a.a->host == l);
-    assert(a.a->gen == a.gen + 1);
+    assert(a.a->gen == ng);
     unlock_lflist(l);
     return 0;
 }
@@ -101,6 +101,10 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
         if(cas2_won(((stx){ng, NULL}), &a.a->stx, &ax))
             return 0;
     }
+}
+
+void flanchor_ordered_init(flanchor *a, uptr g){
+    *a = (flanchor) FLANCHOR_GEN(g);
 }
 
 void report_lflist_profile(void){}

@@ -16,14 +16,14 @@ typedef struct{
     lflist *host;
 }stx;
 
-typedef volatile struct{
-    lanchor lanc;
+typedef align(sizeof(dptr)) volatile struct{
     stx;
+    lanchor lanc;
 } flanchor;
 #define FLANCHOR(list)                          \
-    {LANCHOR(list), .host = list}
+    {.lanc = LANCHOR(list), .host = list}
 #define FLANCHOR_GEN(_gen)                      \
-    {LANCHOR(NULL), .host = NULL, .gen=_gen}
+    {.lanc = LANCHOR(NULL), .host = NULL, .gen=_gen}
 
 
 typedef struct {

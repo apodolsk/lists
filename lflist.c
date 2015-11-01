@@ -509,6 +509,13 @@ flx flx_of(flanchor *a){
     return (flx){.pt = mpt(a), a->p.gen};
 }
 
+void flanchor_ordered_init(flanchor *a, uptr g){
+    a->n.markp = (markp){.st=FL_COMMIT};
+    a->p.markp = (markp){.st=FL_COMMIT};
+    a->n.gen = g;
+    a->p.gen = g;
+}
+
 static bool _flanchor_valid(flx ax, flx *retn, lflist **on);
 
 bool lflist_valid(flx a){
