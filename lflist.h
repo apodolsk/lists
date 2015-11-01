@@ -6,7 +6,6 @@
 
 #include <nalloc.h>
 
-typedef struct flx flx;
 typedef volatile struct flanchor flanchor;
 typedef enum flstate flstate;
 
@@ -27,6 +26,7 @@ typedef struct{
     uptr gen: WORDBITS - 2;
 } markgen;
 
+typedef struct flx flx;
 struct flx{
     union {
         /* Only useful for gdb. */

@@ -75,8 +75,10 @@ flx readx(volatile flx *x){
     flx r;
     r.markp = atomic_read(&x->markp);
     r.markgen = atomic_read(&x->markgen);
-    if(r.validity != FLANC_VALID)
-        TODO(), r = (flx){.st=COMMIT};
+    if(r.validity != FLANC_VALID){
+        EWTF();
+        r = (flx){.st=COMMIT};
+    }
     profile_upd(&reads);
     return r;
 }
@@ -100,6 +102,7 @@ static
 flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!eq2(n, e));
     assert(n.validity == FLANC_VALID && e.validity == FLANC_VALID);
+    assert(pt(n) || n.st >= ABORT);
     assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
     assert(n.st >= ABORT || pt(n));
     profile_upd(&cas_ops);
@@ -260,19 +263,20 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     flx n = readx(&pt(a)->n);
     flx oap = ap;
     while(!updx_won(fl(oap = ap, ABORT, ng), &pt(a)->p, &ap))
-        if(ap.gen != a.gen || ap.st != COMMIT || ap.validity != FLANC_VALID)
+        if(!gen_eq(ap.markgen, a.markgen) || ap.st != COMMIT)
             return -1;
 
     assert(n.st == COMMIT || n.st == ADD);
 
     if(oap.st != COMMIT && n.st == COMMIT){
         profile_upd(&helpful_enqs);
+        /* TODO: validity here? */
         if(pt(n) && !refupd(&n, &(flx){}, &pt(a)->n, t)){
             flx np = readx(&pt(n)->p);
-            if(pt(a)->p.gen != ap.gen || pt(a)->p.validity != FLANC_VALID)
+            if(!gen_eq(pt(a)->p.markgen, ap.markgen))
                 return flinref_down(&n, t), -1;
             finish_del(a, ap, n, readx(&pt(n)->p), t);
-            flinref_down(&n, t);
+            flinref_down((flx[]){n}, t);
         }
     }
     
@@ -293,7 +297,7 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
         /* pt(a)->p = ap = fl(p, ADD, ap.gen); */
         if(!upd2_won(fl(p, ADD, ap.gen), &pt(a)->p, &ap))
             break;
-        if(pt(a)->n.gen != n.gen)
+        if(!gen_eq(pt(a)->n.markgen, n.markgen))
             break;
         if((won = updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1),
                            &pt(p)->n,
@@ -332,6 +336,7 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
             return 0;
     }
 
+    /* TODO assert n valid */
     flx n = readx(&pt(a)->n);
     do if(!gen_eq(pt(a)->p.markgen, a.markgen))
            return -1;
@@ -398,7 +403,7 @@ flx (lflist_deq)(type *t, lflist *l){
         
         flx r = {.pt=n.pt, .markgen=np.markgen};
         assert(r.validity == FLANC_VALID);
-        if(!do_del(r, (flx[]){np}, t))
+        if(!do_del(r, &np, t))
             return r;
     }
 }
@@ -516,6 +521,7 @@ flanchor *flptr(flx a){
     return pt(a);
 }
 
+/* TODO: will want this to report validity */
 flx flx_of(flanchor *a){
     return (flx){.pt = mpt(a), .validity=FLANC_VALID, .gen=a->p.gen};
 }
