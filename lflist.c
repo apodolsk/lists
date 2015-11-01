@@ -318,6 +318,7 @@ err (lflist_jam)(flx a, type *t){
     return lflist_jam_upd(a.gen + 1, a, t);
 }
 
+/* TODO: haven't seriously tried to optimize here. */
 err (lflist_jam_upd)(uptr ng, flx a, type *t){
     flx p;
     for(;;){
@@ -343,7 +344,6 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
     while(n.st == ADD &&
           !updx_won(rup(n, .gen++), &pt(a)->n, &n));
 
-    /* TODO: could probably avoid loops here. */
     flx pn;
     for(;n.st == ADD;){
         if(!gen_eq(p.markgen, a.markgen))

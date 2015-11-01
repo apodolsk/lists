@@ -75,6 +75,8 @@ typedef volatile struct lflist{
 
 #endif  /* FAKELOCKFREE */
 
+/* TODO: replace flx_of() with flarg() to pass the complete value of
+   a->p to enq/deq/etc and omit the redundant a->p read there. */
 flx flx_of(flanchor *a);
 flanchor *flptr(flx a);
 
@@ -84,6 +86,7 @@ err lflist_enq(flx a, type *t, lflist *l);
 flx lflist_deq(type *t, lflist *l);
 err lflist_jam(flx a, type *t);
 
+/* TODO: "return" found a->p. */
 err lflist_jam_upd(uptr ng, flx a, type *t);
 err lflist_enq_upd(uptr ng, flx a, type *t, lflist *l);
 
