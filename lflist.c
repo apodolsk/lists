@@ -3,7 +3,7 @@
  */
 
 #define MODULE LFLISTM
-#define E_LFLISTM 1, BRK, LVL_TODO
+#define E_LFLISTM 0, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -16,8 +16,8 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 
 #ifndef FAKELOCKFREE
 
-#define PROFILE_LFLIST 1
-#define FLANC_CHECK_FREQ E_DBG_LVL ? 0 : 0
+#define PROFILE_LFLIST 0
+#define FLANC_CHECK_FREQ E_DBG_LVL ? 10 : 0
 #define MAX_LOOP 0
 
 #define ADD FL_ADD
@@ -103,21 +103,21 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!n.rsvd && !e.rsvd);
     assert(pt(n) || n.st >= ABORT);
     assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
-    assert(n.st >= ABORT || pt(n));
     profile_upd(&cas_ops);
     
     /* log(2, "CAS! %:% - % if %, addr:%", f, l, n, e, a); */
-    flx ne = e;
-    atomic_compare_exchange_strong(a, &ne, n);
-    /* flx ne = cas2(n, a, e); */
+    flx ne = cas2(n, a, e);
     if(eq2(e, ne))
         log(2, "% %:%- found:% addr:%", eq2(e, ne)? "WON" : "LOST", f, l, e, a);
     
-    /* if((int)(ne.gen - e.gen) < 0) */
-    /*     SUPER_RARITY("woahverflow"); */
     if(!eq2(ne, e))
         profile_upd(&cas_fails);
     assert(!pt(n) || flanchor_valid(n));
+    if(ne.rsvd || ne.validity != FLANC_VALID)
+        ne = (flx){};
+    else if((int)(ne.gen - e.gen) < 0)
+        SUPER_RARITY("woahverflow");
+
     return ne;
 }
 
@@ -665,11 +665,12 @@ bool flanchor_valid(flx ax){
 void report_lflist_profile(void){
     if(!PROFILE_LFLIST)
         return;
+    /* TODO: doesn't take jam into account */
     cnt ops = enqs + dels + deqs;
     cnt del_ops = dels + deqs;
     /* TODO: way out of date. */
-    double ideal_reads = (4 * enqs + 5 * dels + 7 * deqs);
-    double ideal_casx = (4 * enqs + 3 * dels + 3 * deqs);
+    /* double ideal_reads = (4 * enqs + 5 * dels + 7 * deqs); */
+    /* double ideal_casx = (4 * enqs + 3 * dels + 3 * deqs); */
     lppl(0, enqs, 
          (double) enq_restarts/enqs,
          (double) helpful_enqs/enqs,
@@ -681,13 +682,13 @@ void report_lflist_profile(void){
          (double) paborts/del_ops,
          (double) nnp_help_attempts/ops,
          cas_ops,
-         (double) cas_ops/ideal_casx,
-         ideal_casx,
+         /* (double) cas_ops/ideal_casx, */
+         /* ideal_casx, */
          (double) cas_fails/cas_ops,
          (double) prev_help_attempts/enqs,
          (double) prev_helps/prev_help_attempts,
-         reads,
-         (double) reads/ideal_reads
+         reads
+         /* (double) reads/ideal_reads */
          );
 
 }
