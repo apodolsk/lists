@@ -3,7 +3,7 @@
  */
 
 #define MODULE LFLISTM
-#define E_LFLISTM 0, BRK, LVL_TODO
+#define E_LFLISTM 1, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -194,6 +194,8 @@ err (lflist_del)(flx a, type *t){
 
 static
 err (do_del)(flx a, flx *p, type *t){
+    assert(a.validity == FLANC_VALID);
+    
     howok pn_ok = NOT;
     bool del_won = false;
     flx pn = {}, refp = {}, refpp = {};
@@ -254,6 +256,8 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 
 err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     profile_upd(&enqs);
+
+    assert(a.validity == FLANC_VALID);
     
     flx ap;
     if(!flanc_enqable(a, &ap))
@@ -401,7 +405,6 @@ flx (lflist_deq)(type *t, lflist *l){
         }while(!eqx(&pt(a)->n, &n));
         
         flx r = {.pt=n.pt, .markgen=np.markgen};
-        assert(r.validity == FLANC_VALID);
         if(!do_del(r, &np, t))
             return r;
     }
@@ -520,16 +523,24 @@ flanchor *flptr(flx a){
     return pt(a);
 }
 
-/* TODO: will want this to report validity */
 flx flx_of(flanchor *a){
-    return (flx){.pt = mpt(a), .validity=FLANC_VALID, .gen=a->p.gen};
+    return (flx){.pt = mpt(a), .markgen=a->p.markgen};
 }
 
-void flanchor_ordered_init(flanchor *a, uptr g){
+void (flanchor_ordered_init)(flanchor *a, uptr g){
     a->n.markp = (markp){.st=FL_COMMIT};
     a->p.markp = (markp){.st=FL_COMMIT};
-    a->n.gen = g;
-    a->p.gen = g;
+    a->n.markgen = (markgen){.validity=FLANC_VALID, .gen=g};
+    a->p.markgen = (markgen){.validity=FLANC_VALID, .gen=g};
+}
+
+bool (markgen_upd_won)(markgen g, flx a){
+    flx p = readx(&pt(a)->p);
+    if(gen_eq(p.markgen, a.markgen)){
+        assert(p.st == COMMIT);
+        return cas2_won(rup(p, .markgen=g), &pt(a)->p, &p);
+    }
+    return false;
 }
 
 /* TODO: printf isn't reentrant. Watch CPU usage for deadlock upon assert

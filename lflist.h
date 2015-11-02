@@ -89,6 +89,7 @@ err lflist_jam(flx a, type *t);
 /* TODO: "return" found a->p. */
 err lflist_jam_upd(uptr ng, flx a, type *t);
 err lflist_enq_upd(uptr ng, flx a, type *t, lflist *l);
+bool markgen_upd_won(markgen g, flx a);
 
 flx lflist_peek(lflist *l);
 flx lflist_next(flx p, lflist *l);
@@ -119,6 +120,8 @@ const char *flstatestr(flstate s){
 #ifndef LOG_LFLISTM
 #define LOG_LFLISTM 0
 #endif
+
+#define markgen_upd_won(g, a) trace(LFLISTM, 1, markgen_upd_won, PUN(markgen, g), a)
 
 #define lflist_jam_upd(ng, a, t)                                        \
     linref_account(0, trace(LFLISTM, 1, lflist_jam_upd, PUN(uptr, ng), a, t))
