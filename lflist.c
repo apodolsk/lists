@@ -3,8 +3,7 @@
  */
 
 #define MODULE LFLISTM
-
-#define E_LFLISTM 1, BRK, LVL_TODO
+#define E_LFLISTM 0, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -18,7 +17,6 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 #ifndef FAKELOCKFREE
 
 #define PROFILE_LFLIST 0
-#define LIST_CHECK_FREQ 0
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 10 : 0
 #define MAX_LOOP 0
 
@@ -31,6 +29,7 @@ static err help_next(flx a, flx *n, flx *np, flx *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t);
 static err finish_del(flx a, flx p, flx n, flx np, type *t);
 static err do_del(flx a, flx *p, type *t);
+static bool flanchor_valid(flx a);
 
 #define help_next(as...) trace(LFLISTM, 3, help_next, as)
 #define help_prev(as...) trace(LFLISTM, 3, help_prev, as)
@@ -533,52 +532,31 @@ void flanchor_ordered_init(flanchor *a, uptr g){
     a->p.gen = g;
 }
 
-static bool _flanchor_valid(flx ax, flx *retn, lflist **on);
-
-bool lflist_valid(flx a){
-    if(!randpcnt(LIST_CHECK_FREQ) || pause_universe())
-        return true;
-    lflist *on = NULL;
-    for(flx c = a;;){
-        assert(_flanchor_valid(c, &c, &on));
-        TODO();
-        if(!pt(c) || pt(c) == pt(a))
-            break;
-    }
-    assert(on);
-    resume_universe();
-    return true;
-}
-
-bool flanchor_valid(flx ax){
-    if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
-        return true;
-    assert(_flanchor_valid(ax, NULL, NULL));
-    resume_universe();
-    return true;
-}
-
 /* TODO: printf isn't reentrant. Watch CPU usage for deadlock upon assert
    print failure.  */
 static
-bool _flanchor_valid(flx ax, flx *retn, lflist **on){
-    flanchor *volatile a = pt(ax);
-    assert(a);
+bool flanchor_valid(flx ax){
+    if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
+        return true;
+
+    flanchor *a = pt(ax);
     volatile flx 
         px = readx(&a->p),
         nx = readx(&a->n);
     flanchor
         *volatile p = pt(px),
         *volatile n = pt(nx);
-    if(retn)
-        *retn = nx;
 
+    if(px.validity != FLANC_VALID || nx.validity != FLANC_VALID)
+        return resume_universe(),
+               true;
+    
     if(!p || !n){
         assert(!ax.nil);
         assert(px.st == COMMIT || px.st == ABORT);
         assert(nx.st == COMMIT || nx.st == ADD);
-        
-        if(retn) *retn = (flx){};
+
+        resume_universe();
         return true;
     }
 
@@ -596,7 +574,7 @@ bool _flanchor_valid(flx ax, flx *retn, lflist **on){
         *volatile nn = pt(nnx);
 
 
-    assert(!on || *on != cof(a, lflist, nil));
+    /* assert(!on || *on != cof(a, lflist, nil)); */
     assert(n != p || ax.nil || nx.nil);
     assert(nx.st != ADD || nx.nil);
 
@@ -612,6 +590,7 @@ bool _flanchor_valid(flx ax, flx *retn, lflist **on){
                    assert(pn->n.st == ADD && pn->p.st == ADD);
                    assert(pt(pn->n) == a && pn->n.nil);
                }));
+        resume_universe();
         return true;
     }
 
@@ -657,7 +636,8 @@ bool _flanchor_valid(flx ax, flx *retn, lflist **on){
     /* Sniff out unpaused universe or reordering weirdness. */
     assert(eq2(a->p, px));
     assert(eq2(a->n, nx));
-    
+
+    resume_universe();
     return true;
 }
 
@@ -666,6 +646,7 @@ void report_lflist_profile(void){
         return;
     cnt ops = enqs + dels + deqs;
     cnt del_ops = dels + deqs;
+    /* TODO: way out of date. */
     double ideal_reads = (4 * enqs + 5 * dels + 7 * deqs);
     double ideal_casx = (4 * enqs + 3 * dels + 3 * deqs);
     lppl(0, enqs, 
