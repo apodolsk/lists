@@ -17,8 +17,8 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 #ifndef FAKELOCKFREE
 
 #define PROFILE_LFLIST 0
-#define FLANC_CHECK_FREQ E_DBG_LVL ? 10 : 0
-#define MAX_LOOP 64
+#define FLANC_CHECK_FREQ E_DBG_LVL ? 0 : 0
+#define MAX_LOOP 0
 
 #define ADD FL_ADD
 #define ABORT FL_ABORT
@@ -539,10 +539,14 @@ void (flanchor_ordered_init)(uptr g, flanchor *a){
     a->p.mgen = (mgen){.validity=FLANC_VALID, .gen=g};
 }
 
-bool (mgen_upd_won)(mgen g, flx a){
+bool (mgen_upd_won)(mgen g, flx a, type *t){
+    assert(pt(a)->n.st == COMMIT ||
+           pt(a)->n.st == ADD ||
+           !gen_eq(pt(a)->p.mgen, a.mgen));
     flx p = readx(&pt(a)->p);
     if(gen_eq(p.mgen, a.mgen)){
-        assert(p.st == COMMIT);
+        if(p.st == RDY)
+            finish_del(a, p, readx(&pt(a)->n), NULL, t);
         return cas2_won(rup(p, .mgen=g), &pt(a)->p, &p);
     }
     return false;
