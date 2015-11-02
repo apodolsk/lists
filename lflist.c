@@ -527,7 +527,7 @@ flx flx_of(flanchor *a){
     return (flx){.pt = mpt(a), .markgen=a->p.markgen};
 }
 
-void (flanchor_ordered_init)(flanchor *a, uptr g){
+void (flanchor_ordered_init)(uptr g, flanchor *a){
     a->n.markp = (markp){.st=FL_COMMIT};
     a->p.markp = (markp){.st=FL_COMMIT};
     a->n.markgen = (markgen){.validity=FLANC_VALID, .gen=g};

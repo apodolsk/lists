@@ -96,7 +96,7 @@ flx lflist_next(flx p, lflist *l);
 
 bool flanchor_unused(flanchor *a);
 
-void flanchor_ordered_init(flanchor *a, uptr g);
+void flanchor_ordered_init(uptr g, flanchor *a);
 
 void report_lflist_profile(void);
 
