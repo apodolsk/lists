@@ -16,7 +16,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 
 #ifndef FAKELOCKFREE
 
-#define PROFILE_LFLIST 0
+#define PROFILE_LFLIST 1
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 0 : 0
 #define MAX_LOOP 0
 
@@ -157,7 +157,6 @@ void countloops(cnt loops){
         SUPER_RARITY("LOTTA LOOPS: %", loops);
 }
 
-#define progress(o, n, loops) progress(o, ppl(2, n), loops)
 static
 bool (progress)(flx *o, flx n, cnt loops){
     bool eq = eq2(*o, n);
@@ -543,11 +542,12 @@ bool (mgen_upd_won)(mgen g, flx a, type *t){
     assert(pt(a)->n.st == COMMIT ||
            pt(a)->n.st == ADD ||
            !gen_eq(pt(a)->p.mgen, a.mgen));
-    flx p = readx(&pt(a)->p);
-    if(gen_eq(p.mgen, a.mgen)){
+    for(flx p = readx(&pt(a)->p); gen_eq(p.mgen, a.mgen);){
+        assert(p.st == RDY || p.st == COMMIT);
         if(p.st == RDY)
             finish_del(a, p, readx(&pt(a)->n), NULL, t);
-        return cas2_won(rup(p, .mgen=g), &pt(a)->p, &p);
+        if(cas2_won(rup(p, .mgen=g), &pt(a)->p, &p))
+            return true;
     }
     return false;
 }
