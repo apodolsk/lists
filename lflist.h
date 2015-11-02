@@ -10,6 +10,7 @@ typedef volatile struct flanchor flanchor;
 typedef enum flstate flstate;
 
 typedef struct markp{
+    uptr rsvd:1;
     uptr nil:1;
     enum flstate{
         FL_ADD,
@@ -17,8 +18,9 @@ typedef struct markp{
         FL_ABORT,
         FL_COMMIT
     } st:2;
-    uptr pt:WORDBITS-3;
+    uptr pt:WORDBITS-4;
 } markp;
+CASSERT(sizeof(dptr) == 16);
 
 #define FLANC_VALID 0b10
 typedef struct{
@@ -45,7 +47,6 @@ struct flx{
     };
     markgen;
 } align(sizeof(dptr));
-#define mpt(flanc) ((uptr) (flanc) >> 3)
 #define FLX(as...) ((flx){as})
 
 struct flanchor{
@@ -53,9 +54,9 @@ struct flanchor{
     volatile flx p;
 };
 #define FLANCHOR(list)                                                  \
-    {.n.constexp = (list) ? 1 + (FL_RDY << 1) + (uptr) (list) : FL_COMMIT << 1, \
+    {.n.constexp = (list) ? 2 + (FL_RDY << 2) + (uptr) (list) : FL_COMMIT << 2, \
      .n.validity = FLANC_VALID,                                                 \
-     .p.constexp = (list) ? 1 + (FL_RDY << 1) + (uptr) (list) : FL_COMMIT << 1, \
+     .p.constexp = (list) ? 2 + (FL_RDY << 2) + (uptr) (list) : FL_COMMIT << 2, \
      .p.validity = FLANC_VALID,                                                 \
             }
 
@@ -65,11 +66,11 @@ typedef volatile struct lflist{
     flanchor nil;
 }lflist;
 #define LFLIST(l, elem)                                                 \
-    {{.n = {.constexp =                                     \
-            (elem) ? 2 + (uptr) (elem) : 3 + (uptr) (l),    \
+    {{.n = {.constexp =                                                 \
+            (elem) ? (FL_RDY << 2) + (uptr) (elem) : 2 + (FL_RDY << 2) + (uptr) (l), \
             .validity = FLANC_VALID},                       \
       .p = {.constexp =                                     \
-            (elem) ? 2 + (uptr) (elem) : 3 + (uptr) (l),    \
+            (elem) ? (FL_RDY << 2) + (uptr) (elem) : 2 + (FL_RDY << 2)  + (uptr) (l), \
             .validity = FLANC_VALID},                       \
     }}
 

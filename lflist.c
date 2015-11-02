@@ -18,7 +18,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 
 #define PROFILE_LFLIST 0
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 10 : 0
-#define MAX_LOOP 0
+#define MAX_LOOP 64
 
 #define ADD FL_ADD
 #define ABORT FL_ABORT
@@ -39,8 +39,9 @@ static bool flanchor_valid(flx a);
 
 static inline
 flanchor *pt(flx a){
-    return (flanchor *) (uptr)(a.pt << 3);
+    return (flanchor *) (uptr)(a.pt << 4);
 }
+#define mpt(flanc) ((uptr) (flanc) >> 4)
 
 static inline
 flx fl(flx p, flstate s, uptr gen){
@@ -74,10 +75,8 @@ flx readx(volatile flx *x){
     flx r;
     r.markp = atomic_read(&x->markp);
     r.markgen = atomic_read(&x->markgen);
-    if(r.validity != FLANC_VALID){
-        EWTF();
+    if(r.validity != FLANC_VALID || r.rsvd)
         r = (flx){.st=COMMIT};
-    }
     profile_upd(&reads);
     return r;
 }
@@ -101,6 +100,7 @@ static
 flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!eq2(n, e));
     assert(n.validity == FLANC_VALID && e.validity == FLANC_VALID);
+    assert(!n.rsvd && !e.rsvd);
     assert(pt(n) || n.st >= ABORT);
     assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
     assert(n.st >= ABORT || pt(n));

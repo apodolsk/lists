@@ -25,11 +25,13 @@ typedef align(sizeof(dptr)) volatile struct{
 #define FLANCHOR_GEN(_gen)                      \
     {.lanc = LANCHOR(NULL), .host = NULL, .gen=_gen}
 
-
 typedef struct {
     flanchor *a;
     uptr gen;
 }flx;
+
+/* TODO: */
+typedef int markgen;
 
 #define pudef (flx, "{%, %}", a->a, a->gen)
 #include <pudef.h>
