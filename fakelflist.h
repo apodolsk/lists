@@ -31,7 +31,7 @@ typedef struct {
 }flx;
 
 /* TODO: */
-typedef int markgen;
+typedef int mgen;
 
 #define pudef (flx, "{%, %}", a->a, a->gen)
 #include <pudef.h>

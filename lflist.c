@@ -17,7 +17,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 #ifndef FAKELOCKFREE
 
 #define PROFILE_LFLIST 0
-#define FLANC_CHECK_FREQ E_DBG_LVL ? 0 : 0
+#define FLANC_CHECK_FREQ E_DBG_LVL ? 10 : 0
 #define MAX_LOOP 64
 
 #define ADD FL_ADD
@@ -27,7 +27,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 
 static err help_next(flx a, flx *n, flx *np, flx *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t);
-static err finish_del(flx a, flx p, flx n, flx np, type *t);
+static err finish_del(flx a, flx p, flx n, const flx *np, type *t);
 static err do_del(flx a, flx *p, type *t);
 static bool flanchor_valid(flx a);
 
@@ -221,7 +221,7 @@ err (do_del)(flx a, flx *p, type *t){
             break;
     }
 
-    if(pn_ok == WON && !finish_del(a, *p, n, np, t))
+    if(pn_ok == WON && !finish_del(a, *p, n, &np, t))
         *p = casx((flx){.st=COMMIT, .validity=FLANC_VALID, .gen=a.gen}, &pt(a)->p, *p);
 
     if(pn_ok == WON) profile_upd(&pn_wins);
@@ -273,14 +273,8 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
 
     if(oap.st != COMMIT && n.st == COMMIT){
         profile_upd(&helpful_enqs);
-        /* TODO: validity here? */
-        if(pt(n) && !refupd(&n, &(flx){}, &pt(a)->n, t)){
-            flx np = readx(&pt(n)->p);
-            if(!gen_eq(pt(a)->p.mgen, ap.mgen))
-                return flinref_down(&n, t), -1;
-            finish_del(a, ap, n, readx(&pt(n)->p), t);
-            flinref_down((flx[]){n}, t);
-        }
+        if(finish_del(rup(a, .gen=ng), ap, n, NULL, t))
+            return -1;
     }
     
     flx nil = {.nil=1, .st=ADD, .pt=mpt(&l->nil),
@@ -369,17 +363,11 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
             break;
     }
 
-    if(n.st != ADD || pt(pn) == pt(a) || p.st != ADD)
-        if(do_del(a, &p, t)){
-            n = readx(&pt(a)->n);
-            if(pt(n) && !refupd(&n, &(flx){}, &pt(a)->n, t)){
-                flx np = readx(&pt(n)->p);
-                if(!gen_eq(pt(a)->p.mgen, a.mgen))
-                    return flinref_down(&n, t), -1;
-                finish_del(a, p, n, readx(&pt(n)->p), t);
-                flinref_down(&n, t);
-            }
-        }
+    if(n.st != ADD || pt(pn) == pt(a) || p.st != ADD){
+        do_del(a, &p, t);
+        if(finish_del(a, p, readx(&pt(a)->n), NULL, t))
+            return -1;
+    }
 
     while(gen_eq(p.mgen, a.mgen))
         if(updx_won(rup(p, .st=COMMIT, .gen=ng), &pt(a)->p, &p))
@@ -498,7 +486,17 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
 }
 
 static 
-err (finish_del)(flx a, flx p, flx n, flx np, type *t){
+err (finish_del)(flx a, flx p, flx n, const flx *np_arg, type *t){
+    flx np;
+    if(!np_arg){
+        if(!pt(n) || refupd(&n, &(flx){}, &pt(a)->n, t))
+            return 0;
+        np = readx(&pt(n)->p);
+        if(!gen_eq(pt(a)->p.mgen, a.mgen))
+            goto fail;
+    }else
+        np = *np_arg;
+    
     flx onp = np;
     if(pt(np) == pt(a))
         updx_ok_modst(RDY, RDY, fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
@@ -509,13 +507,20 @@ err (finish_del)(flx a, flx p, flx n, flx np, type *t){
         if(nn.nil && nn.st == ADD){
             flx nnp = readx(&pt(nn)->p);
             if(!gen_eq(pt(a)->p.mgen, a.mgen))
-                return -1;
+                goto fail;
             if(pt(nnp) == pt(a))
                 casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
         }
     }
 
+    if(!np_arg)
+        flinref_down(&n, t);
     return 0;
+
+fail:
+    if(!np_arg)
+        flinref_down(&n, t);
+    return -1;
 }
 
 flanchor *flptr(flx a){
