@@ -102,7 +102,9 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(n.gen >= e.gen);
     assert(n.validity == FLANC_VALID && e.validity == FLANC_VALID);
     assert(!n.rsvd && !e.rsvd);
-    assert(pt(n) || n.st >= ABORT);
+    if(!(pt(n) || n.st >= ABORT))
+        EWTF("%, %", f, l);
+    /* assert(pt(n) || n.st >= ABORT); */
     assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
     profile_upd(&cas_ops);
     
@@ -336,11 +338,14 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
 
     /* TODO assert n valid */
     flx n = readx(&pt(a)->n);
-    do if(!gen_eq(pt(a)->p.mgen, a.mgen))
+    do{
+        p = readx(&pt(a)->p);
+        if(!gen_eq(p.mgen, a.mgen) || n.rsvd)
            return -1;
-    while(n.st == ADD &&
-          !updx_won(rup(n, .gen++), &pt(a)->n, &n));
+    }while(n.st == ADD &&
+           !updx_won(rup(n, .gen++), &pt(a)->n, &n));
 
+    /* TODO: can avoid loop */
     flx pn, np;
     for(;n.st == ADD;){
         if(!gen_eq(p.mgen, a.mgen))
@@ -351,21 +356,25 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
         pn = readx(&pt(p)->n);
         if(!eqx(&pt(a)->p, &p))
             continue;
-        if(pt(pn) == pt(a)){
-            if(pt(np) == pt(a) ||
-               updx_ok(fl(a, RDY, np.gen), &pt(n)->p, &np))
-                break;
+        
+        /* TODO: can probably avoid */
+        if(!eqx(&pt(n)->p, &np))
             continue;
+        
+        if(pt(pn) == pt(a) || pt(np) == pt(a)){
+            if(pt(np) == pt(a) || updx_ok(fl(a, RDY, np.gen), &pt(n)->p, &np))
+                break;
+        }else{
+            if(pt(np) != pt(p) || pt(pn) != pt(n) || pn.st == COMMIT)
+                break;
+            if(updx_ok(rup(pn, .gen++), &pt(p)->n, &pn))
+                break;
         }
-        if(pt(np) != pt(p) || pt(pn) != pt(n) || pn.st == COMMIT)
-            break;
-        if(updx_ok(rup(pn, .gen++), &pt(p)->n, &pn))
-            break;
     }
 
     if(n.st != ADD || pt(pn) == pt(a) || p.st != ADD){
         do_del(a, &p, t);
-        if(finish_del(a, p, readx(&pt(a)->n), NULL, t))
+        if(finish_del(a, readx(&pt(a)->p), readx(&pt(a)->n), NULL, t))
             return -1;
     }
 
