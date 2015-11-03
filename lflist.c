@@ -341,14 +341,14 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
     while(n.st == ADD &&
           !updx_won(rup(n, .gen++), &pt(a)->n, &n));
 
-    flx pn;
+    flx pn, np;
     for(;n.st == ADD;){
         if(!gen_eq(p.mgen, a.mgen))
             return -1;
         if(p.st != ADD)
             break;
+        np = readx(&pt(n)->p);
         pn = readx(&pt(p)->n);
-        flx np = readx(&pt(n)->p);
         if(!eqx(&pt(a)->p, &p))
             continue;
         if(pt(pn) == pt(a)){
