@@ -99,6 +99,7 @@ bool gen_eq(mgen a, mgen ref){
 static
 flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!eq2(n, e));
+    assert(n.gen >= e.gen);
     assert(n.validity == FLANC_VALID && e.validity == FLANC_VALID);
     assert(!n.rsvd && !e.rsvd);
     assert(pt(n) || n.st >= ABORT);
@@ -115,8 +116,8 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!pt(n) || flanchor_valid(n));
     if(ne.rsvd || ne.validity != FLANC_VALID)
         ne = (flx){};
-    /* else if((int)(ne.gen - e.gen) < 0) */
-    /*     SUPER_RARITY("woahverflow"); */
+    else
+        assert((int)(ne.gen - e.gen) >= 0);
 
     return ne;
 }
