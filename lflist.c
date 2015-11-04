@@ -99,7 +99,7 @@ static
 flx (raw_casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     flx ne = cas2(n, a, e);
     if(eq2(e, ne))
-        log(2, "% %:%- % => % p:%", eq2(e, ne)? "WON" : "LOST", f, l, e, n, (void *) a);
+        log(0, "% %:%- % => % p:%", eq2(e, ne)? "WON" : "LOST", f, l, e, n, (void *) a);
     if(!eq2(ne, e))
         profile_upd(&cas_fails);
     if(ne.rsvd || ne.validity != FLANC_VALID)
@@ -394,8 +394,6 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
         flx np = readx(&pt(n)->p);
         if(!eqx(&pt(a)->p, &p))
             continue;
-        if(!eqx(&pt(p)->n, &pn))
-            continue;
         
         if(pt(pn) == pt(a)){
             if(pt(np) == pt(a))
@@ -407,7 +405,9 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
                 break;
             continue;
         }
-            
+        if(!eqx(&pt(p)->n, &pn))
+            continue;
+
         if(pn.st == COMMIT || pt(pn) != pt(n) || pt(np) != pt(p))
             goto skip_del;
         if(updx_ok(rup(pn, .gen++), &pt(p)->n, &pn))
