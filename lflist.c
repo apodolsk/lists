@@ -6,9 +6,11 @@
 #include <nalloc.h>
 
 static volatile
-dbg cnt enqs, enq_restarts, deqs, dels, del_restarts,
-        pn_wins, naborts, paborts, prev_helps,
-        prev_help_attempts, cas_ops, cas_fails, reads, nnp_help_attempts;
+dbg cnt
+    enqs, enq_restarts, deqs, dels, del_restarts,
+    pn_wins, naborts, paborts, prev_helps,
+    prev_help_attempts, cas_ops, cas_fails,
+    reads, nnp_help_attempts, flinrefs, flinref_fails;
 
 #ifndef FAKELOCKFREE
 
@@ -71,8 +73,10 @@ void profile_upd(volatile uptr *i){
 static
 err (flinref_up)(flx a, type *t){
     assert(pt(a));
+    profile_upd(&flinrefs);
     if(a.nil || !t->linref_up(pt(a), t))
         return 0;
+    profile_upd(&flinref_fails);
     return -1;
 }
 
@@ -359,6 +363,8 @@ err (lflist_jam)(flx a, type *t){
     return lflist_jam_upd(a.gen + 1, a, t);
 }
 
+/* TODO: need to take flinref on p in pn-write case. Not a problem while
+   the only consumer of jam_upd is segalloc, with guaranteed mem validity.  */
 /* TODO: haven't seriously tried to optimize here. */
 err (lflist_jam_upd)(uptr ng, flx a, type *t){
     flx p = readx(&pt(a)->p);
@@ -709,7 +715,9 @@ void lflist_report_profile(void){
          (double) cas_fails/cas_ops,
          (double) prev_help_attempts/enqs,
          (double) prev_helps/prev_help_attempts,
-         reads
+         reads,
+         flinrefs,
+         (double) flinrefs/flinref_fails
          /* (double) reads/ideal_reads */
          );
 
