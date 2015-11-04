@@ -231,7 +231,7 @@ err (do_del)(flx a, flx *p, type *t){
     if(pt(np) != pt(a))
         finish_del(a, readx(&pt(a)->p), n, &np, t);
     if(gen_eq(p->mgen, a.mgen))
-        *p = casx(rup(*p, .nil=0, .pt=0, .st=FLANC_VALID), &pt(a)->p, *p);
+        *p = casx(rup(*p, .nil=0, .pt=0, .st=COMMIT), &pt(a)->p, *p);
 
     if(pn_ok == WON) profile_upd(&pn_wins);
     else if(pt(np) == pt(a)) profile_upd(&paborts);
