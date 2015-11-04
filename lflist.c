@@ -10,7 +10,7 @@
 #include <nalloc.h>
 
 static volatile
-dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
+dbg cnt enqs, enq_restarts, deqs, dels, del_restarts,
         pn_wins, naborts, paborts, prev_helps,
         prev_help_attempts, cas_ops, cas_fails, reads, nnp_help_attempts;
 
@@ -29,7 +29,7 @@ static err help_next(flx a, flx *n, flx *np, flx *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t);
 static err finish_del(flx a, flx p, const flx *n, const flx *np, type *t);
 static err do_del(flx a, flx *p, type *t);
-static bool flanchor_valid(flanchor *a);
+static bool flanc_valid(flanchor *a);
 
 #define help_next(as...) trace(LFLISTM, 3, help_next, as)
 #define do_del(as...) trace(LFLISTM, 2, do_del, as)
@@ -46,6 +46,20 @@ flanchor *pt(flx a){
     return (flanchor *) (uptr)(a.pt << 4);
 }
 #define mpt(flanc) ((uptr) (flanc) >> 4)
+
+static
+void countloops(cnt loops){
+    if(MAX_LOOP && loops > MAX_LOOP)
+        SUPER_RARITY("LOTTA LOOPS: %", loops);
+}
+
+static
+bool (progress)(flx *o, flx n, cnt loops){
+    bool eq = eq2(*o, n);
+    *o = n;
+    countloops(loops);
+    return !eq;
+}
 
 static inline
 flx fl(flx p, flstate s, uptr gen){
@@ -115,7 +129,6 @@ flx (raw_casx)(const char *f, int l, flx n, volatile flx *a, flx e){
 static
 flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     assert(!eq2(n, e));
-    assert(n.gen >= e.gen);
     assert(aligned_pow2(pt(n), alignof(flanchor)));
     assert(n.validity == FLANC_VALID && e.validity == FLANC_VALID);
     assert(!n.rsvd && !e.rsvd);
@@ -124,8 +137,8 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     profile_upd(&cas_ops);
     
     flx ne = (raw_casx)(f, l, n, a, e);
-    
-    assert(flanchor_valid(cof_aligned_pow2(a, flanchor)));
+
+    assert(flanc_valid(cof_aligned_pow2(a, flanchor)));
     return ne;
 }
 
@@ -160,20 +173,6 @@ bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
 }
 
 static
-void countloops(cnt loops){
-    if(MAX_LOOP && loops > MAX_LOOP)
-        SUPER_RARITY("LOTTA LOOPS: %", loops);
-}
-
-static
-bool (progress)(flx *o, flx n, cnt loops){
-    bool eq = eq2(*o, n);
-    *o = n;
-    countloops(loops);
-    return !eq;
-}
-
-static
 err (refupd)(flx *a, flx *held, volatile flx *src, type *t){
     if(!pt(*a))
         return -1;
@@ -190,7 +189,6 @@ err (refupd)(flx *a, flx *held, volatile flx *src, type *t){
 }
 
 err (lflist_del)(flx a, type *t){
-    profile_upd(&dels);
     assert(!a.nil);
     
     flx p = readx(&pt(a)->p);
@@ -202,6 +200,7 @@ err (lflist_del)(flx a, type *t){
 static
 err (do_del)(flx a, flx *p, type *t){
     assert(a.validity == FLANC_VALID);
+    profile_upd(&dels);
     
     howok pn_ok = NOT;
     bool del_won = false;
@@ -351,7 +350,6 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
         assert(progress(&op, p, c++) | progress(&opn, pn, 0)))
     {
         muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
-        /* pt(a)->p = ap = fl(p, ADD, ap.gen); */
         if(!upd2_won(fl(p, ADD, ap.gen), &pt(a)->p, &ap))
             break;
         if(!gen_eq(pt(a)->n.mgen, n.mgen))
@@ -429,7 +427,7 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
 
     do_del(a, &p, t);
 skip_del:;
-    assert(flanchor_valid(pt(a)));
+    assert(flanc_valid(pt(a)));
 
     while(gen_eq(p.mgen, a.mgen))
         if(updx_won(rup(p, .st=COMMIT, .gen=ng), &pt(a)->p, &p))
@@ -556,7 +554,7 @@ flx flx_of(flanchor *a){
     return (flx){.pt = mpt(a), .mgen=a->p.mgen};
 }
 
-void (flanchor_ordered_init)(uptr g, flanchor *a){
+void (flanc_ordered_init)(uptr g, flanchor *a){
     a->n.markp = (markp){.st=FL_COMMIT};
     a->p.markp = (markp){.st=FL_COMMIT};
     a->n.mgen = (mgen){.validity=FLANC_VALID, .gen=g};
@@ -580,7 +578,7 @@ bool (mgen_upd_won)(mgen g, flx a, type *t){
 /* TODO: printf isn't reentrant. Watch CPU usage for deadlock upon assert
    print failure.  */
 static
-bool flanchor_valid(flanchor *a){
+bool flanc_valid(flanchor *a){
     if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
         return true;
 
@@ -592,7 +590,8 @@ bool flanchor_valid(flanchor *a){
         *volatile n = pt(nx);
 
     if(px.validity != FLANC_VALID ||
-       nx.validity != FLANC_VALID)
+       nx.validity != FLANC_VALID ||
+       nx.rsvd || px.rsvd)
         return resume_universe(),
                true;
     
@@ -703,25 +702,22 @@ bool flanchor_valid(flanchor *a){
     return true;
 }
 
-void report_lflist_profile(void){
+void lflist_report_profile(void){
     if(!PROFILE_LFLIST)
         return;
     /* TODO: doesn't take jam into account */
-    cnt ops = enqs + dels + deqs;
-    cnt del_ops = dels + deqs;
     /* TODO: way out of date. */
     /* double ideal_reads = (4 * enqs + 5 * dels + 7 * deqs); */
     /* double ideal_casx = (4 * enqs + 3 * dels + 3 * deqs); */
     lppl(0, enqs, 
          (double) enq_restarts/enqs,
-         (double) helpful_enqs/enqs,
          deqs,
          dels,
-         (double) del_restarts/del_ops,
-         (double) pn_wins/del_ops,
-         (double) naborts/del_ops,
-         (double) paborts/del_ops,
-         (double) nnp_help_attempts/ops,
+         (double) del_restarts/dels,
+         (double) pn_wins/dels,
+         (double) naborts/dels,
+         (double) paborts/dels,
+         (double) nnp_help_attempts/dels,
          cas_ops,
          /* (double) cas_ops/ideal_casx, */
          /* ideal_casx, */

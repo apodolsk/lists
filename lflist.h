@@ -97,9 +97,9 @@ flx lflist_next(flx p, lflist *l);
 
 bool flanchor_unused(flanchor *a);
 
-void flanchor_ordered_init(uptr g, flanchor *a);
+void flanc_ordered_init(uptr g, flanchor *a);
 
-void report_lflist_profile(void);
+void lflist_report_profile(void);
 
 #ifndef FAKELOCKFREE
 

@@ -105,10 +105,10 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
     }
 }
 
-void flanchor_ordered_init(uptr g, flanchor *a){
+void flanc_ordered_init(uptr g, flanchor *a){
     *a = (flanchor) FLANCHOR_GEN(g);
 }
 
-void report_lflist_profile(void){}
+void lflist_report_profile(void){}
  
 #endif
