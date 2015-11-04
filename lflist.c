@@ -1,7 +1,3 @@
-/**
- * Alex Podolsky <apodolsk@andrew.cmu.edu>
- */
-
 #define MODULE LFLISTM
 #define E_LFLISTM 1, BRK, LVL_TODO
 
@@ -27,7 +23,7 @@ dbg cnt enqs, enq_restarts, deqs, dels, del_restarts,
 
 static err help_next(flx a, flx *n, flx *np, flx *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t);
-static err finish_del(flx a, flx p, const flx *n, const flx *np, type *t);
+static void finish_del(flx a, flx *p, const flx *n, const flx *np, type *t);
 static err do_del(flx a, flx *p, type *t);
 static bool flanc_valid(flanchor *a);
 
@@ -220,7 +216,7 @@ err (do_del)(flx a, flx *p, type *t){
         assert(pt(pn) == pt(a) && (pn.st == RDY || pn.st == ABORT));
 
         bool has_winner = n.st >= ABORT;
-        switch(updx_ok(fl(n, COMMIT, n.gen + 1), &pt(a)->n, &n)){
+        switch(updx_ok(rup(n, .st=COMMIT, .gen++), &pt(a)->n, &n)){
         case NOT: continue;
         case WON: del_won = del_won || !has_winner;
         case OK: break;
@@ -235,11 +231,10 @@ err (do_del)(flx a, flx *p, type *t){
         goto done;
 
     if(pn_ok)
-        finish_del(a, *p, &n, &np, t);
+        finish_del(a, p, &n, &np, t);
     else
-        finish_del(a, (*p = readx(&pt(a)->p)), NULL, NULL, t);
+        finish_del(a, p, NULL, NULL, t);
     
-    volatile flx op = *p;
     if(gen_eq(p->mgen, a.mgen) && p->st != COMMIT)
         if(!updx_ok(rup(*p, .nil=0, .pt=0, .st=COMMIT), &pt(a)->p, p))
             assert(!gen_eq(p->mgen, a.mgen));
@@ -257,55 +252,46 @@ done:
 }
 
 static 
-err (finish_del)(flx a, flx p, const flx *n_arg, const flx *np_arg, type *t){
-    if(p.st == COMMIT)
-        return 0;
+void (finish_del)(flx a, flx *p, const flx *n_opt, const flx *np_opt, type *t){
+    if(p->st == COMMIT || !gen_eq(p->mgen, a.mgen))
+        return;
 
     flx np, n;
-    if(!np_arg){
+    if(!np_opt){
         n = readx(&pt(a)->n);
         if(!pt(n) || refupd(&n, &(flx){}, &pt(a)->n, t))
-            return 0;
+            return;
         np = readx(&pt(n)->p);
-        volatile flx n2 = readx(&pt(a)->n);
-        if(!gen_eq(pt(a)->p.mgen, a.mgen))
-            goto fail;
-        assert(pt(n2) == pt(n));
+        *p = readx(&pt(a)->p);
+        if(p->st == COMMIT || !gen_eq(p->mgen, a.mgen))
+            goto finish;
     }else{
-        np = *np_arg;
-        n = *n_arg;
+        np = *np_opt;
+        n = *n_opt;
     }
 
-    if(!gen_eq(p.mgen, a.mgen))
-        goto fail;
-    assert(p.st != ADD);
-
-    volatile flx op = p;
-    if(!eqx(&pt(a)->p, &p)){
-        assert(p.st == COMMIT || !gen_eq(op.mgen, p.mgen));
-        goto fail;
-    }
+    assert(p->st != ADD);
     
     flx onp = np;
     if(pt(np) == pt(a))
-        updx_ok_modst(RDY, RDY, fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
+        updx_ok_modst(RDY, RDY, fl(*p, np.st, np.gen + n.nil), &pt(n)->p, &np);
 
     if(pt(np) && np.st == ADD && gen_eq(np.mgen, onp.mgen)){
         profile_upd(&nnp_help_attempts);
         flx nn = readx(&pt(n)->n);
         if(nn.nil && nn.st == ADD){
             flx nnp = readx(&pt(nn)->p);
-            if(!gen_eq(pt(a)->p.mgen, a.mgen))
-                goto fail;
+            if(!eqx(&pt(a)->p, p))
+                goto finish;
             if(pt(nnp) == pt(a))
                 casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
         }
     }
 
-fail:
-    if(!np_arg)
+finish:
+    if(!np_opt)
         flinref_down(&n, t);
-    return -1;
+    return;
 }
 
 static
@@ -361,7 +347,7 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     }
     if(won){
         casx(fl(a, RDY, p.gen + 1), &l->nil.p, p);
-        casx(fl(p, RDY, ap.gen), &pt(a)->p, ap);
+        casx(rup(ap, .st=RDY), &pt(a)->p, ap);
     }
     
     flinref_down(&p, t);
@@ -447,8 +433,7 @@ flx (lflist_deq)(type *t, lflist *l){
         do{
             if(help_next(a, &n, &np, (flx[]){on}, t))
                 EWTF();
-            /* TODO: use nil */
-            if(pt(n) == &l->nil || !progress(&on, n, lps++))
+            if(n.nil || !progress(&on, n, lps++))
                 return flinref_down(&n, t), (flx){};
         }while(!eqx(&pt(a)->n, &n));
         
@@ -461,7 +446,7 @@ flx (lflist_deq)(type *t, lflist *l){
 static 
 err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
     for(flx on = *refn;; assert(progress(&on, *n, 0))){
-        do if(!pt(*n)) return *np = (flx){}, -1;
+        do if(!pt(*n)) return -1;
         while(refupd(n, refn, &pt(a)->n, t));
 
         flx onp = *np = readx(&pt(*n)->p);
@@ -508,7 +493,7 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
             flx pp = readx(&pt(*p)->p);
         newpp:;
             profile_upd(&prev_help_attempts);
-            do if(!pt(pp) || pp.st == COMMIT || pp.st == ADD)
+            do if(!pt(pp) || pp.st != RDY)
                    goto readp;
             while(refupd(&pp, refpp, &pt(*p)->p, t));
             
@@ -654,7 +639,8 @@ bool flanc_valid(flanchor *a){
                np->p.st == RDY));
     assert((px.st != COMMIT && px.st != ABORT) || pn != a);
            
-
+    /* TODO: probably not worth maintaining these. Failure here could be
+       an out-of-date assert. Though I'm not seeing any. */
     switch(px.st){
     case ADD:
         assert(nx.st == ADD || nx.st == RDY);
@@ -672,7 +658,6 @@ bool flanc_valid(flanchor *a){
         break;
     }
 
-               
     switch(nx.st){
     case ADD:
         assert(nx.nil);
