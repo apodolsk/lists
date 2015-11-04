@@ -99,7 +99,7 @@ static
 flx (raw_casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     flx ne = cas2(n, a, e);
     if(eq2(e, ne))
-        log(0, "% %:%- % => % p:%", eq2(e, ne)? "WON" : "LOST", f, l, e, n, (void *) a);
+        log(2, "% %:%- % => % p:%", eq2(e, ne)? "WON" : "LOST", f, l, e, n, (void *) a);
     if(!eq2(ne, e))
         profile_upd(&cas_fails);
     if(ne.rsvd || ne.validity != FLANC_VALID)
@@ -237,6 +237,44 @@ err (do_del)(flx a, flx *p, type *t){
     return -!del_won;
 }
 
+static 
+err (finish_del)(flx a, flx p, flx n, const flx *np_arg, type *t){
+    flx np;
+    if(!np_arg){
+        if(!pt(n) || refupd(&n, &(flx){}, &pt(a)->n, t))
+            return 0;
+        np = readx(&pt(n)->p);
+        if(!gen_eq(pt(a)->p.mgen, a.mgen))
+            goto fail;
+    }else
+        np = *np_arg;
+    
+    flx onp = np;
+    if(pt(np) == pt(a))
+        updx_ok_modst(RDY, RDY, fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
+
+    if(pt(np) && np.st == ADD && gen_eq(np.mgen, onp.mgen)){
+        profile_upd(&nnp_help_attempts);
+        flx nn = readx(&pt(n)->n);
+        if(nn.nil && nn.st == ADD){
+            flx nnp = readx(&pt(nn)->p);
+            if(!gen_eq(pt(a)->p.mgen, a.mgen))
+                goto fail;
+            if(pt(nnp) == pt(a))
+                casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
+        }
+    }
+
+    if(!np_arg)
+        flinref_down(&n, t);
+    return 0;
+
+fail:
+    if(!np_arg)
+        flinref_down(&n, t);
+    return -1;
+}
+
 static
 bool flanc_enqable(flx a, flx *ap){
     *ap = readx(&pt(a)->p);
@@ -338,48 +376,49 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
             return 0;
     }
 
-    /* TODO assert n valid */
     flx n = readx(&pt(a)->n);
-    do{
-        p = readx(&pt(a)->p);
+    do{ p = readx(&pt(a)->p);
         if(!gen_eq(p.mgen, a.mgen) || n.rsvd)
            return -1;
     }while(n.st == ADD &&
            !updx_won(rup(n, .gen++), &pt(a)->n, &n));
 
-    /* TODO: can avoid loop */
-    flx pn, np;
+    /* TODO: can probably avoid loop */
     for(;n.st == ADD;){
+        assert(n.nil);
         if(!gen_eq(p.mgen, a.mgen))
             return -1;
         if(p.st != ADD)
             break;
-        np = readx(&pt(n)->p);
-        pn = readx(&pt(p)->n);
+        flx pn = readx(&pt(p)->n);
+        flx np = readx(&pt(n)->p);
         if(!eqx(&pt(a)->p, &p))
             continue;
-        /* TODO: can probably avoid */
-        if(!eqx(&pt(n)->p, &np))
+        if(!eqx(&pt(p)->n, &pn))
             continue;
-        if(pt(np) != pt(p))
-            break;
         
         if(pt(pn) == pt(a)){
-            if(pt(np) == pt(a) || updx_ok(fl(a, RDY, np.gen), &pt(n)->p, &np))
+            if(pt(np) == pt(a))
                 break;
-        }else{
-            if(pt(pn) != pt(n) || pn.st == COMMIT)
+            /* TODO: can probably break */
+            if(!eqx(&pt(a)->n, &n))
+                continue;
+            if(updx_ok(fl(a, RDY, np.gen), &pt(n)->p, &np))
                 break;
-            if(updx_ok(rup(pn, .gen++), &pt(p)->n, &pn))
-                break;
+            continue;
         }
+            
+        if(pn.st == COMMIT || pt(pn) != pt(n) || pt(np) != pt(p))
+            goto skip_del;
+        if(updx_ok(rup(pn, .gen++), &pt(p)->n, &pn))
+            goto skip_del;
     }
 
-    if(n.st != ADD || pt(np) != pt(p) || pt(pn) == pt(a) || p.st != ADD){
-        do_del(a, &p, t);
-        if(finish_del(a, readx(&pt(a)->p), readx(&pt(a)->n), NULL, t))
-            return -1;
-    }
+    do_del(a, &p, t);
+    if(finish_del(a, readx(&pt(a)->p), readx(&pt(a)->n), NULL, t))
+        return -1;
+skip_del:;
+    assert(flanchor_valid(pt(a)));
 
     while(gen_eq(p.mgen, a.mgen))
         if(updx_won(rup(p, .st=COMMIT, .gen=ng), &pt(a)->p, &p))
@@ -495,44 +534,6 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
 
         *pn = readx(&pt(*p)->n);
     }
-}
-
-static 
-err (finish_del)(flx a, flx p, flx n, const flx *np_arg, type *t){
-    flx np;
-    if(!np_arg){
-        if(!pt(n) || refupd(&n, &(flx){}, &pt(a)->n, t))
-            return 0;
-        np = readx(&pt(n)->p);
-        if(!gen_eq(pt(a)->p.mgen, a.mgen))
-            goto fail;
-    }else
-        np = *np_arg;
-    
-    flx onp = np;
-    if(pt(np) == pt(a))
-        updx_ok_modst(RDY, RDY, fl(p, np.st, np.gen + n.nil), &pt(n)->p, &np);
-
-    if(pt(np) && np.st == ADD && gen_eq(np.mgen, onp.mgen)){
-        profile_upd(&nnp_help_attempts);
-        flx nn = readx(&pt(n)->n);
-        if(nn.nil && nn.st == ADD){
-            flx nnp = readx(&pt(nn)->p);
-            if(!gen_eq(pt(a)->p.mgen, a.mgen))
-                goto fail;
-            if(pt(nnp) == pt(a))
-                casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
-        }
-    }
-
-    if(!np_arg)
-        flinref_down(&n, t);
-    return 0;
-
-fail:
-    if(!np_arg)
-        flinref_down(&n, t);
-    return -1;
 }
 
 flanchor *flptr(flx a){
