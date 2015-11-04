@@ -99,7 +99,7 @@ static
 flx (raw_casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     flx ne = cas2(n, a, e);
     if(eq2(e, ne))
-        log(0, "% %:%- % => % p:%", eq2(e, ne)? "WON" : "LOST", f, l, e, n, (void *) a);
+        log(2, "% %:%- % => % p:%", eq2(e, ne)? "WON" : "LOST", f, l, e, n, (void *) a);
     if(!eq2(ne, e))
         profile_upd(&cas_fails);
     if(ne.rsvd || ne.validity != FLANC_VALID)
@@ -224,8 +224,14 @@ err (do_del)(flx a, flx *p, type *t){
             break;
     }
 
-    if(pn_ok == WON && !finish_del(a, *p, n, &np, t))
-        *p = casx((flx){.st=COMMIT, .validity=FLANC_VALID, .gen=a.gen}, &pt(a)->p, *p);
+    if(pn_ok)
+        finish_del(a, *p, n, &np, t);
+    else if(pt(pn) != pt(a))
+        finish_del(a, *p, (flx){}, NULL, t);
+    if(pt(np) != pt(a))
+        finish_del(a, readx(&pt(a)->p), n, &np, t);
+    if(gen_eq(p->mgen, a.mgen))
+        *p = casx(rup(*p, .nil=0, .pt=0, .st=FLANC_VALID), &pt(a)->p, *p);
 
     if(pn_ok == WON) profile_upd(&pn_wins);
     else if(pt(np) == pt(a)) profile_upd(&paborts);
@@ -278,16 +284,8 @@ fail:
 static
 bool flanc_enqable(flx a, flx *ap){
     *ap = readx(&pt(a)->p);
-    if(ap->gen != a.gen || ap->st == ADD || ap->st == ABORT)
+    if(ap->st != COMMIT || !gen_eq(ap->mgen, a.mgen))
         return false;
-    if(ap->st == RDY){
-        flx apn = pt(*ap)->n;
-        if(eqx(&pt(a)->p, ap)){
-            if(pt(apn) == pt(a))
-                return false;
-        } else if(!eq2(*ap, ((flx){.st=COMMIT, .validity=FLANC_VALID, .gen=a.gen})))
-            return false;
-    }
     return true;
 }
 
@@ -301,26 +299,17 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     assert(a.validity == FLANC_VALID);
     
     flx ap;
-    if(!flanc_enqable(a, &ap))
+    if(!flanc_enqable(a, &ap) ||
+       !updx_won(fl(ap, ABORT, ng), &pt(a)->p, &ap))
         return -1;
 
-    /* TODO: can probably omit this in favor of a single a->p write. */
     flx n = readx(&pt(a)->n);
-    flx oap = ap;
-    while(!updx_won(fl(oap = ap, ABORT, ng), &pt(a)->p, &ap))
-        if(!gen_eq(ap.mgen, a.mgen) || ap.st != COMMIT)
-            return -1;
-
     assert(n.st == COMMIT || n.st == ADD);
-
-    if(oap.st != COMMIT && n.st == COMMIT){
-        profile_upd(&helpful_enqs);
-        if(finish_del(rup(a, .gen=ng), ap, n, NULL, t))
-            return -1;
-    }
-    
-    flx nil = {.nil=1, .st=ADD, .pt=mpt(&l->nil),
-               .validity=FLANC_VALID, .gen=n.gen + 1};
+    flx nil = {.nil=1,
+               .st=ADD,
+               .pt=mpt(&l->nil),
+               .validity=FLANC_VALID,
+               .gen=n.gen + 1};
     while(!updx_won(fl(nil, ADD, n.gen + 1), &pt(a)->n, &n))
         if(!eqx(&pt(a)->p, &ap))
             return -1;
@@ -367,12 +356,7 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
             return -1;
         if(p.st == ADD)
             break;
-        if(updx_won(rup(p,
-                        .gen = ng,
-                        .st = (p.st != ABORT
-                               ? p.st
-                               : (pt(p) ? RDY : COMMIT))),
-                    &pt(a)->p, &p))
+        if(updx_won(rup(p, .gen = ng, .st = COMMIT), &pt(a)->p, &p))
             return 0;
     }
 
@@ -419,10 +403,7 @@ skip_del:;
     assert(flanchor_valid(pt(a)));
 
     while(gen_eq(p.mgen, a.mgen))
-        if(updx_won(rup(p,
-                        .gen = ng,
-                        .st = (pt(p) ? RDY : COMMIT)),
-                    &pt(a)->p, &p))
+        if(updx_won(rup(p, .st=COMMIT, .gen=ng), &pt(a)->p, &p))
             return 0;
         else
             assert(p.st != ABORT || !gen_eq(p.mgen, a.mgen));
@@ -558,9 +539,7 @@ bool (mgen_upd_won)(mgen g, flx a, type *t){
            pt(a)->n.st == ADD ||
            !gen_eq(pt(a)->p.mgen, a.mgen));
     for(flx p = readx(&pt(a)->p); gen_eq(p.mgen, a.mgen);){
-        assert(p.st == RDY || p.st == COMMIT);
-        if(p.st == RDY)
-            finish_del(a, p, readx(&pt(a)->n), NULL, t);
+        assert(p.st == COMMIT);
         flx n = raw_casx(rup(p, .mgen=g), &pt(a)->p, p);
         if(eq2(n, p))
             return true;
@@ -644,7 +623,7 @@ bool flanchor_valid(flanchor *a){
            || (px.st == ADD && nx.st == ADD)
            || (pt(np->p) == a &&
                np->n.st == COMMIT &&
-               (np->p.st == RDY || np->p.st == ABORT)));
+               np->p.st == RDY));
            
 
     /* switch(px.st){ */
