@@ -20,7 +20,6 @@ typedef struct markp{
     } st:2;
     uptr pt:WORDBITS-4;
 } markp;
-CASSERT(sizeof(dptr) == 16);
 
 #define FLANC_VALID 0b10
 typedef struct{
@@ -49,10 +48,11 @@ struct flx{
 } align(sizeof(dptr));
 #define FLX(as...) ((flx){as})
 
+/* TODO: flanc_valid assumes aligned 32, but seg construction will hamper that */
 struct flanchor{
     volatile flx n;
     volatile flx p;
-};
+} align(2 * sizeof(dptr));
 #define FLANCHOR(list)                                                  \
     {.n.constexp = (list) ? 2 + (FL_RDY << 2) + (uptr) (list) : FL_COMMIT << 2, \
      .n.validity = FLANC_VALID,                                                 \
@@ -108,7 +108,7 @@ const char *flstatestr(flstate s){
     return (const char *[]){"ADD", "RDY", "ABORT", "COMMIT"}[s];
 }
 
-#define pudef (flx, "{%:%:%, %:%}", (void *)(uptr)(a->pt << 3), (uptr) a->nil, \
+#define pudef (flx, "{%:%:%, %:%}", (void *)(uptr)(a->pt << 4), (uptr) a->nil, \
                flstatestr(a->st), (uptr) a->gen, (uptr) a->validity)
 #include <pudef.h>
 #define pudef (flanchor, "n:%, p:%", a->n, a->p)
