@@ -415,13 +415,14 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
     }
 
     do_del(a, &p, t);
-    if(finish_del(a, readx(&pt(a)->p), readx(&pt(a)->n), NULL, t))
-        return -1;
 skip_del:;
     assert(flanchor_valid(pt(a)));
 
     while(gen_eq(p.mgen, a.mgen))
-        if(updx_won(rup(p, .st=COMMIT, .gen=ng), &pt(a)->p, &p))
+        if(updx_won(rup(p,
+                        .gen = ng,
+                        .st = (pt(p) ? RDY : COMMIT)),
+                    &pt(a)->p, &p))
             return 0;
         else
             assert(p.st != ABORT || !gen_eq(p.mgen, a.mgen));
