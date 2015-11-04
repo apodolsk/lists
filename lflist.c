@@ -17,7 +17,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 #ifndef FAKELOCKFREE
 
 #define PROFILE_LFLIST 0
-#define FLANC_CHECK_FREQ E_DBG_LVL ? 20 : 0
+#define FLANC_CHECK_FREQ E_DBG_LVL ? 100 : 0
 #define MAX_LOOP 0
 
 #define ADD FL_ADD
@@ -27,7 +27,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 
 static err help_next(flx a, flx *n, flx *np, flx *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t);
-static err finish_del(flx a, flx p, flx n, const flx *np, type *t);
+static err finish_del(flx a, flx p, const flx *n, const flx *np, type *t);
 static err do_del(flx a, flx *p, type *t);
 static bool flanchor_valid(flanchor *a);
 
@@ -36,6 +36,9 @@ static bool flanchor_valid(flanchor *a);
 #define refupd(as...) trace(LFLISTM, 4, refupd, as)
 #define flinref_up(as...) trace(LFLISTM, 5, flinref_up, as)
 #define flinref_down(as...) trace(LFLISTM, 5, flinref_down, as)
+
+#undef LOG_LFLISTM
+#define LOG_LFLISTM 0
 
 static inline
 flanchor *pt(flx a){
@@ -99,7 +102,7 @@ static
 flx (raw_casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     flx ne = cas2(n, a, e);
     if(eq2(e, ne))
-        log(2, "% %:%- % => % p:%", eq2(e, ne)? "WON" : "LOST", f, l, e, n, (void *) a);
+        log(2, "%:%- % => % p:%", f, l, e, n, (void *) a);
     if(!eq2(ne, e))
         profile_upd(&cas_fails);
     if(ne.rsvd || ne.validity != FLANC_VALID)
@@ -202,14 +205,18 @@ err (do_del)(flx a, flx *p, type *t){
     howok pn_ok = NOT;
     bool del_won = false;
     flx pn = {}, refp = {}, refpp = {};
-    
+
     flx np, refn = {}, n = readx(&pt(a)->n);
     for(int l = 0;; countloops(l++), profile_upd(&del_restarts)){
-        if(help_next(a, &n, &np, &refn, t))
+        if(help_next(a, &n, &np, &refn, t)){
+            ppl(2, n, np);
             break;
+        }
         assert(pt(np) == pt(a));
-        if(help_prev(a, p, &pn, &refp, &refpp, t))
+        if(help_prev(a, p, &pn, &refp, &refpp, t)){
+            ppl(2, *p, pn);
             break;
+        }
         assert(pt(pn) == pt(a) && (pn.st == RDY || pn.st == ABORT));
 
         bool has_winner = n.st >= ABORT;
@@ -224,19 +231,29 @@ err (do_del)(flx a, flx *p, type *t){
             break;
     }
 
+    if(p->st == ADD)
+        goto done;
+
     if(pn_ok)
-        finish_del(a, *p, n, &np, t);
-    else if(pt(pn) != pt(a))
-        finish_del(a, *p, (flx){}, NULL, t);
-    if(pt(np) != pt(a))
-        finish_del(a, readx(&pt(a)->p), n, &np, t);
-    if(gen_eq(p->mgen, a.mgen))
-        *p = casx(rup(*p, .nil=0, .pt=0, .st=COMMIT), &pt(a)->p, *p);
+        finish_del(a, *p, &n, &np, t);
+    else
+        finish_del(a, (*p = readx(&pt(a)->p)), NULL, NULL, t);
+    /*     finish_del */
+    /* else if(pt(pn) != pt(a)) */
+    /*     finish_del(a, *p, NULL, NULL, t); */
+    /* else if(pt(np) != pt(a)) */
+    /*     finish_del(a, readx(&pt(a)->p), &n, &np, t); */
+    volatile flx op = *p;
+    if(gen_eq(p->mgen, a.mgen) && p->st != COMMIT)
+        if(!updx_ok(rup(*p, .nil=0, .pt=0, .st=COMMIT), &pt(a)->p, p))
+            assert(!gen_eq(p->mgen, a.mgen));
 
     if(pn_ok == WON) profile_upd(&pn_wins);
     else if(pt(np) == pt(a)) profile_upd(&paborts);
     else if(pt(np) != pt(a)) profile_upd(&naborts);
-        
+
+done:
+    
     flinref_down(&refn, t);
     flinref_down(&refp, t);
     flinref_down(&refpp, t);
@@ -244,16 +261,34 @@ err (do_del)(flx a, flx *p, type *t){
 }
 
 static 
-err (finish_del)(flx a, flx p, flx n, const flx *np_arg, type *t){
-    flx np;
+err (finish_del)(flx a, flx p, const flx *n_arg, const flx *np_arg, type *t){
+    if(p.st == COMMIT)
+        return 0;
+
+    flx np, n;
     if(!np_arg){
+        n = readx(&pt(a)->n);
         if(!pt(n) || refupd(&n, &(flx){}, &pt(a)->n, t))
             return 0;
         np = readx(&pt(n)->p);
+        volatile flx n2 = readx(&pt(a)->n);
         if(!gen_eq(pt(a)->p.mgen, a.mgen))
             goto fail;
-    }else
+        assert(pt(n2) == pt(n));
+    }else{
         np = *np_arg;
+        n = *n_arg;
+    }
+
+    if(!gen_eq(p.mgen, a.mgen))
+        goto fail;
+    assert(p.st != ADD);
+
+    volatile flx op = p;
+    if(!eqx(&pt(a)->p, &p)){
+        assert(p.st == COMMIT || !gen_eq(op.mgen, p.mgen));
+        goto fail;
+    }
     
     flx onp = np;
     if(pt(np) == pt(a))
@@ -270,10 +305,6 @@ err (finish_del)(flx a, flx p, flx n, const flx *np_arg, type *t){
                 casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
         }
     }
-
-    if(!np_arg)
-        flinref_down(&n, t);
-    return 0;
 
 fail:
     if(!np_arg)
@@ -297,13 +328,14 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     profile_upd(&enqs);
 
     assert(a.validity == FLANC_VALID);
-    
+
     flx ap;
-    if(!flanc_enqable(a, &ap) ||
-       !updx_won(fl(ap, ABORT, ng), &pt(a)->p, &ap))
+    if(!flanc_enqable(a, &ap))
+        return -1;
+    flx n = readx(&pt(a)->n);
+    if(!updx_won(fl(ap, ABORT, ng), &pt(a)->p, &ap))
         return -1;
 
-    flx n = readx(&pt(a)->n);
     assert(n.st == COMMIT || n.st == ADD);
     flx nil = {.nil=1,
                .st=ADD,
@@ -624,45 +656,46 @@ bool flanchor_valid(flanchor *a){
            || (pt(np->p) == a &&
                np->n.st == COMMIT &&
                np->p.st == RDY));
+    assert((px.st != COMMIT && px.st != ABORT) || pn != a);
            
 
-    /* switch(px.st){ */
-    /* case ADD: */
-    /*     assert(nx.st == ADD || nx.st == RDY); */
-    /*     break; */
-    /* case RDY: */
-    /*     assert(pn == a || nx.st == COMMIT || nx.st == ADD); */
-    /*     break; */
-    /* case ABORT: */
-    /*     assert(pn != a && (nx.st == COMMIT || nx.st == ADD)); */
-    /*     break; */
-    /* case COMMIT: */
-    /*     assert(pn != a); */
-    /*     assert(np != a); */
-    /*     assert(!nn || pt(nn->p) != a); */
-    /*     break; */
-    /* } */
+    switch(px.st){
+    case ADD:
+        assert(nx.st == ADD || nx.st == RDY);
+        break;
+    case RDY:
+        assert(pn == a || nx.st == COMMIT || nx.st == ADD);
+        break;
+    case ABORT:
+        assert(pn != a && (nx.st == COMMIT || nx.st == ADD));
+        break;
+    case COMMIT:
+        assert(pn != a);
+        assert(np != a);
+        assert(!nn || pt(nn->p) != a);
+        break;
+    }
 
                
-    /* switch(nx.st){ */
-    /* case ADD: */
-    /*     assert(nx.nil); */
-    /*     assert(px.st != RDY || pn == a); */
-    /*     break; */
-    /* case RDY: case ABORT:  */
-    /*     assert(pn == a); */
-    /*     assert(np == a */
-    /*            || (pt(np->p) == a && */
-    /*                np->n.st == COMMIT && */
-    /*                (np->p.st == RDY || np->p.st == ABORT))); */
-    /*     break; */
-    /* case COMMIT: */
-    /*     assert((pn == a && np == a) || */
-    /*            (pn == n && np == a) || */
-    /*            (pn == n && np == p) || */
-    /*            (pn != a && np != a)); */
-    /*     break; */
-    /* } */
+    switch(nx.st){
+    case ADD:
+        assert(nx.nil);
+        assert(px.st != RDY || pn == a);
+        break;
+    case RDY: case ABORT:
+        assert(pn == a);
+        assert(np == a
+               || (pt(np->p) == a &&
+                   np->n.st == COMMIT &&
+                   (np->p.st == RDY || np->p.st == ABORT)));
+        break;
+    case COMMIT:
+        assert((pn == a && np == a) ||
+               (pn == n && np == a) ||
+               (pn == n && np == p) ||
+               (pn != a && np != a));
+        break;
+    }
 
     
     /* Sniff out unpaused universe or reordering weirdness. */
