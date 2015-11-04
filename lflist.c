@@ -3,7 +3,7 @@
  */
 
 #define MODULE LFLISTM
-#define E_LFLISTM 1, BRK, LVL_TODO
+#define E_LFLISTM 0, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -32,6 +32,7 @@ static err do_del(flx a, flx *p, type *t);
 static bool flanchor_valid(flanchor *a);
 
 #define help_next(as...) trace(LFLISTM, 3, help_next, as)
+#define do_del(as...) trace(LFLISTM, 2, do_del, as)
 #define help_prev(as...) trace(LFLISTM, 3, help_prev, as)
 #define refupd(as...) trace(LFLISTM, 4, refupd, as)
 #define flinref_up(as...) trace(LFLISTM, 5, flinref_up, as)
@@ -195,7 +196,7 @@ err (lflist_del)(flx a, type *t){
     flx p = readx(&pt(a)->p);
     if(!gen_eq(p.mgen, a.mgen) || p.st >= ABORT)
         return EARG("Early gen abort: %", a);
-    return do_del(a, &p, t);
+    return (do_del)(a, &p, t);
 }
 
 static
@@ -238,11 +239,7 @@ err (do_del)(flx a, flx *p, type *t){
         finish_del(a, *p, &n, &np, t);
     else
         finish_del(a, (*p = readx(&pt(a)->p)), NULL, NULL, t);
-    /*     finish_del */
-    /* else if(pt(pn) != pt(a)) */
-    /*     finish_del(a, *p, NULL, NULL, t); */
-    /* else if(pt(np) != pt(a)) */
-    /*     finish_del(a, readx(&pt(a)->p), &n, &np, t); */
+    
     volatile flx op = *p;
     if(gen_eq(p->mgen, a.mgen) && p->st != COMMIT)
         if(!updx_ok(rup(*p, .nil=0, .pt=0, .st=COMMIT), &pt(a)->p, p))
@@ -380,9 +377,9 @@ err (lflist_jam)(flx a, type *t){
 
 /* TODO: haven't seriously tried to optimize here. */
 err (lflist_jam_upd)(uptr ng, flx a, type *t){
-    flx p;
+    flx p = readx(&pt(a)->p);
     for(;;){
-        if(!flanc_enqable(a, &p))
+        if(p.st == RDY || p.st == ADD)
             do_del(a, &p, t);
         if(!gen_eq(p.mgen, a.mgen))
             return -1;
@@ -458,7 +455,7 @@ flx (lflist_deq)(type *t, lflist *l){
         }while(!eqx(&pt(a)->n, &n));
         
         flx r = {.pt=n.pt, .mgen=np.mgen};
-        if(!do_del(r, &np, t))
+        if(!(do_del)(r, &np, t))
             return r;
     }
 }
