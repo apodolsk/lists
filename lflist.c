@@ -3,7 +3,7 @@
  */
 
 #define MODULE LFLISTM
-#define E_LFLISTM 0, BRK, LVL_TODO
+#define E_LFLISTM 1, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -17,7 +17,7 @@ dbg cnt enqs, enq_restarts, helpful_enqs, deqs, dels, del_restarts,
 #ifndef FAKELOCKFREE
 
 #define PROFILE_LFLIST 0
-#define FLANC_CHECK_FREQ E_DBG_LVL ? 100 : 0
+#define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
 #define MAX_LOOP 0
 
 #define ADD FL_ADD
