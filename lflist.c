@@ -27,7 +27,6 @@ static err help_next(flx a, flx *n, flx *np, flx *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t);
 static void finish_del(flx a, flx *p, const flx *n, const flx *np, type *t);
 static err do_del(flx a, flx *p, type *t);
-static bool flanc_valid(flanchor *a);
 
 #define help_next(as...) trace(LFLISTM, 3, help_next, as)
 #define do_del(as...) trace(LFLISTM, 2, do_del, as)
@@ -138,7 +137,7 @@ flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
     
     flx ne = (raw_casx)(f, l, n, a, e);
 
-    assert(flanc_valid(cof_aligned_pow2(a, flanchor)));
+    if_dbg(flanc_valid(cof_aligned_pow2(a, flanchor)));
     return ne;
 }
 
@@ -419,7 +418,7 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
 
     do_del(a, &p, t);
 skip_del:;
-    assert(flanc_valid(pt(a)));
+    if_dbg(flanc_valid(pt(a)));
 
     while(gen_eq(p.mgen, a.mgen))
         if(updx_won(rup(p, .st=COMMIT, .gen=ng), &pt(a)->p, &p))
@@ -568,10 +567,9 @@ bool (mgen_upd_won)(mgen g, flx a, type *t){
 
 /* TODO: printf isn't reentrant. Watch CPU usage for deadlock upon assert
    print failure.  */
-static
 bool flanc_valid(flanchor *a){
     if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
-        return true;
+        return false;
 
     volatile flx 
         px = readx(&a->p),
@@ -589,6 +587,13 @@ bool flanc_valid(flanchor *a){
     if(!p || !n){
         assert(px.st == COMMIT || px.st == ABORT);
         assert(nx.st == COMMIT || nx.st == ADD);
+
+        assert(!p);
+        if(n){
+            assert(pt(n->p) != a);
+            flanchor *nn = pt(n->n);
+            assert(!nn || pt(nn->p) != a);
+        }
 
         resume_universe();
         return true;

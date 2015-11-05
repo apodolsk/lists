@@ -33,11 +33,10 @@ struct flx{
         /* Only useful for gdb. */
         flanchor *mp;
         markp;
-        /* C11 (6.6) doesn't require casting addresses in constant
-           expressions. GCC/CLANG do as an undocumented extension, but no
-           computation from a cast may be truncated (as it would be if
-           writing .pt). The only documentation of this is a mailing list
-           post
+        /* Implementation-defined C11 (6.6) whether you can cast addresses
+           in constant expressions. GCC/CLANG do as an undocumented
+           extension, but no computation from a cast may be truncated (as
+           it would be if writing .pt). There's a mailing list post
            (http://lists.cs.uiuc.edu/pipermail/cfe-dev/2013-May/029450.html)
            attributing this to relocation troubles. Nevertheless, an
            untruncated cast can be masked to get the same effect, as in
@@ -100,6 +99,9 @@ bool flanchor_unused(flanchor *a);
 void flanc_ordered_init(uptr g, flanchor *a);
 
 void lflist_report_profile(void);
+
+/* TODO: should probably change back to no-pause-universe scheme. */
+bool flanc_valid(flanchor *a);
 
 #ifndef FAKELOCKFREE
 
