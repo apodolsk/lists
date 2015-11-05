@@ -432,7 +432,7 @@ flx (lflist_deq)(type *t, lflist *l){
     profile_upd(&deqs);
     
     flx a = {.nil=1,.pt=mpt(&l->nil)};
-    flx refn = {}, on = {};
+    flx on = {};
     for(cnt lps = 0;;){
         flx np = {}, n = readx(&pt(a)->n);
         do{
@@ -474,7 +474,7 @@ err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
 
 static 
 err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
-    flx op = {}, opn = {};
+    flx op = {};
     for(cnt pl = 0;; assert(progress(&op, *p, pl++))){
         if(!pt(*refp))
             goto newp;
@@ -565,6 +565,10 @@ bool (mgen_upd_won)(mgen g, flx a, type *t){
     return false;
 }
 
+bool (flanchor_unused)(flanchor *a){
+    return a->p.st == COMMIT;
+}
+
 /* TODO: printf isn't reentrant. Watch CPU usage for deadlock upon assert
    print failure.  */
 bool flanc_valid(flanchor *a){
@@ -608,7 +612,6 @@ bool flanc_valid(flanchor *a){
 
     flanchor
         *volatile pn = pt(pnx),
-        *volatile pp = pt(ppx),
         *volatile np = pt(npx),
         *volatile nn = pt(nnx);
 
