@@ -5,6 +5,7 @@
 #include <lflist.h>
 #include <nalloc.h>
 
+/* TODO: probably obsoleted by perf probe. */
 static volatile
 dbg cnt
     enqs, enq_restarts, deqs, dels, del_restarts,
