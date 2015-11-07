@@ -17,7 +17,7 @@ dbg cnt
 
 #define PROFILE_LFLIST 0
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
-#define MAX_LOOP 0
+#define MAX_LOOP 256
 
 #define ADD FL_ADD
 #define ABORT FL_ABORT
