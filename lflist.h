@@ -80,16 +80,40 @@ typedef volatile struct lflist{
 flx flx_of(flanchor *a);
 flanchor *flptr(flx a);
 
-err lflist_del(flx a, type *t);
+/* Iff !ret and (int)(ng - flx_of(flptr(a)).gen) > 0, then for a' = rup(a,
+   .gen = ng), one of the following will be true exactly once:
+   - !lflist_del(a', t) or else
+   - lflist_deq(t, l) == a'
+   - !lflist_jam_upd(_, a', t)
+   - for any flx n, if !lflist_enq_upd(nng, n, t, l), then lflist_deq(t,
+   l) == a' && lflist_deq(t, l) == rup(n, .gen = nng).
 
+   If (int)(ng - flx_of(flptr(a)).gen) <= 0, the result is undefined.
+
+   If ret, there's no effect.
+*/
+err lflist_enq_upd(uptr ng, flx a, type *t, lflist *l);
+/* Equivalent to lflist_enq_upd(a.gen + 1, a, t, l). */
 err lflist_enq(flx a, type *t, lflist *l);
+
+/* For list l and flx a'|flptr(a') == flptr(a), iff !lflist_enq_upd(a.gen,
+   a', t, l), then upon return, !lflist_enq_upd(_, a, t, l) exactly once,
+   or else lflist_deq(t, l) != a.  Otherwise, there's no effect.
+
+   In other words, even though exactly one del call of a successfully
+   enqueued flx a returns 0, any del of a implies that it's fully deleted.
+*/
+err lflist_del(flx a, type *t);
 flx lflist_deq(type *t, lflist *l);
+
+/* Iff !ret, then lflist_enq_upd(ng, a, t) */
+err lflist_jam_upd(uptr ng, flx a, type *t);
 err lflist_jam(flx a, type *t);
 
-/* TODO: "return" found a->p. */
-err lflist_jam_upd(uptr ng, flx a, type *t);
-err lflist_enq_upd(uptr ng, flx a, type *t, lflist *l);
 bool mgen_upd_won(mgen g, flx a, type *t);
+
+
+
 
 flx lflist_peek(lflist *l);
 flx lflist_next(flx p, lflist *l);
