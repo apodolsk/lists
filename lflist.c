@@ -56,7 +56,7 @@
  */
 
 #define MODULE LFLISTM
-#define E_LFLISTM 0, BRK, LVL_TODO
+#define E_LFLISTM 1, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -144,12 +144,25 @@ void (flinref_down)(flx *a, type *t){
     *a = (flx){};
 }
 
-#include <race.h>
-static noinline
+/* TODO: the only issue with this is a race involving validity bits:
+   do_del(a) via seg_new reads a->n.markgen when it's part of a zombie
+   seg, so .rsvd=0. Then a is freed anew and a valid a->n.mgen is
+   read. Wild access results. It'd suffice to add another reserved bit to
+   x->markp. */
+/* static */
+/* flx readx(volatile flx *x){ */
+/*     flx r; */
+/*     r.markp = atomic_read(&x->markp); */
+/*     r.mgen = atomic_read(&x->mgen); */
+/*     if(r.validity != FLANC_VALID || r.rsvd) */
+/*         r = (flx){.st=COMMIT}; */
+/*     profile_upd(&reads); */
+/*     return r; */
+/* } */
+
+static
 flx readx(volatile flx *x){
-    flx r;
-    r.markp = atomic_read(&x->markp);
-    r.mgen = atomic_read(&x->mgen);
+    flx r = atomic_read2(x);
     if(r.validity != FLANC_VALID || r.rsvd)
         r = (flx){.st=COMMIT};
     profile_upd(&reads);

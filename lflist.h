@@ -47,7 +47,6 @@ struct flx{
 } align(sizeof(dptr));
 #define FLX(as...) ((flx){as})
 
-/* TODO: flanc_valid assumes aligned 32, but seg construction will hamper that */
 struct flanchor{
     volatile flx n;
     volatile flx p;
@@ -58,8 +57,6 @@ struct flanchor{
      .p.constexp = (list) ? 2 + (FL_RDY << 2) + (uptr) (list) : FL_COMMIT << 2, \
      .p.validity = FLANC_VALID,                                                 \
             }
-
-CASSERT(offsetof(list, nil) == 0);
 
 typedef volatile struct lflist{
     flanchor nil;
