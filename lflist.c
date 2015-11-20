@@ -1,5 +1,5 @@
 #define MODULE LFLISTM
-#define E_LFLISTM 1, BRK, LVL_TODO
+#define E_LFLISTM 0, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -668,7 +668,7 @@ bool flanc_valid(flanchor *a){
     assert((px.st != COMMIT && px.st != ABORT) || pn != a);
            
     /* TODO: probably not worth maintaining these. Failure here could be
-       an out-of-date assert. Though I'm not seeing any. */
+       an out-of-date assert. */
     switch(px.st){
     case ADD:
         assert(nx.st == ADD || nx.st == RDY);
