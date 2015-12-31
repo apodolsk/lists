@@ -1,5 +1,5 @@
 #define MODULE LFLISTM
-#define E_LFLISTM 0, BRK, LVL_TODO
+#define E_LFLISTM 1, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
@@ -74,7 +74,7 @@ static
 err (flinref_up)(flx a, type *t){
     assert(pt(a));
     profile_upd(&flinrefs);
-    if(a.nil || !t->linref_up(pt(a), t))
+    if(a.nil || !linref_up(pt(a), t))
         return 0;
     profile_upd(&flinref_fails);
     return -1;
@@ -83,7 +83,7 @@ err (flinref_up)(flx a, type *t){
 static
 void (flinref_down)(flx *a, type *t){
     if(!a->nil && pt(*a))
-        t->linref_down(pt(*a));
+        linref_down(pt(*a), t);
     *a = (flx){};
 }
 

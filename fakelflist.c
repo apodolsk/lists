@@ -63,7 +63,7 @@ flx (lflist_deq)(type *t, lflist *l){
         rlx = (flx){r, r->gen};
         assert(r->host == l);
         r->host = NULL;
-        muste(t->linref_up(r, t));
+        muste(linref_up(r, t));
     }
     unlock_lflist(l);
     return rlx;
