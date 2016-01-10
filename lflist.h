@@ -30,8 +30,6 @@ typedef struct{
 typedef struct flx flx;
 struct flx{
     union {
-        /* Only useful for gdb. */
-        flanchor *mp;
         markp;
         
         /* It's implementation-defined in C11 (6.6) whether you can cast
@@ -40,9 +38,9 @@ struct flx{
            truncated (as it would be if writing .pt). There's a mailing
            list post
            (http://lists.cs.uiuc.edu/pipermail/cfe-dev/2013-May/029450.html)
-           attributing this to relocation troubles. Nevertheless, an
-           untruncated cast can be masked to get the same effect, as in
-           LFLIST(). */
+           attributing this to relocation troubles. Nevertheless, you can
+           use arithmetic on an untruncated cast to get the same effect,
+           as in LFLIST(). */
         uptr constexp;
     };
     mgen;
