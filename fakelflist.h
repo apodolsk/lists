@@ -7,9 +7,10 @@ typedef volatile struct lflist{
     list l;
     pthread_mutex_t mut;
 } lflist;
-#define LFLIST(self, elem)                      \
-    {.l = LIST(&(self)->l, elem),               \
-            .mut = PTHREAD_MUTEX_INITIALIZER}
+#define LFLIST(self, elem){                     \
+        .l = LIST(&(self)->l, elem),            \
+        .mut = PTHREAD_MUTEX_INITIALIZER        \
+    }
 
 typedef struct{
     uptr gen;

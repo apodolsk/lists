@@ -48,7 +48,7 @@ err (lflist_del)(flx a, type *t){
     }
     if(a.a->gen != a.gen)
         return unlock_lflist(l), -1;
-    list_remove(&a.a->lanc, &l->l);
+    list_del(&a.a->lanc, &l->l);
     assert(a.a->host == l);
     a.a->host = NULL;
     unlock_lflist(l);

@@ -26,7 +26,7 @@ void list_enq(lanchor *a, list *l){
     list_add_before(a, &l->nil, l);
 }
 
-void list_remove(lanchor *a, list *l){
+void list_del(lanchor *a, list *l){
     a->n->p = a->p;
     a->p->n = a->n;
     l->size--;
@@ -65,7 +65,7 @@ lanchor *list_peek(list *l){
 lanchor *list_deq(list *l){
     lanchor *a = list_peek(l);
     if(a)
-        list_remove(a, l);
+        list_del(a, l);
     return a;
 }
 

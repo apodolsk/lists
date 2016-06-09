@@ -8,14 +8,17 @@ struct lanchor{
 };
 #define LANCHOR(l) {                            \
         (l) ? &((list *) (l))->nil : NULL,      \
-        (l) ? &((list *) (l))->nil : NULL}
+        (l) ? &((list *) (l))->nil : NULL       \
+    }
 
 typedef volatile struct{
     lanchor nil;
     uptr size;
 } list;
-#define LIST(l, elem) {{(elem) ? (elem) : &(l)->nil ,   \
-                        (elem) ? (elem) : &(l)->nil}}
+#define LIST(l, elem) {                         \
+        {(elem) ? (elem) : &(l)->nil ,          \
+         (elem) ? (elem) : &(l)->nil}           \
+    }
 
 #define LIST_FOR_EACH(cur, list)                                    \
     for(cur = list->nil.n; cur != &list->nil; cur = cur->n)
@@ -26,7 +29,7 @@ void list_enq(lanchor *a, list *l);
 void list_add_before(lanchor *a, lanchor *beforehis, list *l);
 void list_add_after(lanchor *a, lanchor *afterhis, list *l);
 
-void list_remove(lanchor *a, list *l);
+void list_del(lanchor *a, list *l);
 
 typedef bool (* lpred)(lanchor *to_compare, void *key);
 lanchor *list_find(lpred pred, void *key, list *list);

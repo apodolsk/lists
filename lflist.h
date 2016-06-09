@@ -51,23 +51,28 @@ struct flanchor{
     volatile flx n;
     volatile flx p;
 } align(2 * sizeof(dptr));
-#define FLANCHOR(list)                                                  \
-    {.n.constexp = (list) ? 2 + (FL_RDY << 2) + (uptr) (list) : FL_COMMIT << 2, \
-     .n.validity = FLANC_VALID,                                                 \
-     .p.constexp = (list) ? 2 + (FL_RDY << 2) + (uptr) (list) : FL_COMMIT << 2, \
-     .p.validity = FLANC_VALID,                                                 \
-            }
+#define FLANCHOR(list){                                                 \
+        .n.constexp = (list)                                            \
+        ? 2 + (FL_RDY << 2) + (uptr) (list)                             \
+        : FL_COMMIT << 2,                                               \
+        .n.validity = FLANC_VALID,                                      \
+        .p.constexp = (list) ?                                          \
+           2 + (FL_RDY << 2) + (uptr) (list) : FL_COMMIT << 2,          \
+        .p.validity = FLANC_VALID,                                      \
+    }
 
 typedef volatile struct lflist{
     flanchor nil;
 }lflist;
-#define LFLIST(l, elem)                                                 \
-    {{.n = {.constexp =                                                 \
-            (elem) ? (FL_RDY << 2) + (uptr) (elem) : 2 + (FL_RDY << 2) + (uptr) (l), \
-            .validity = FLANC_VALID},                       \
-      .p = {.constexp =                                     \
-            (elem) ? (FL_RDY << 2) + (uptr) (elem) : 2 + (FL_RDY << 2)  + (uptr) (l), \
-            .validity = FLANC_VALID},                       \
+#define LFLIST(l, elem){                                                \
+        {.n = {.constexp = (elem)                                       \
+               ? (FL_RDY << 2) + (uptr) (elem)                          \
+               : 2 + (FL_RDY << 2) + (uptr) (l),                        \
+               .validity = FLANC_VALID},                                \
+         .p = {.constexp = (elem)                                       \
+               ? (FL_RDY << 2) + (uptr) (elem)                          \
+               : 2 + (FL_RDY << 2)  + (uptr) (l),                       \
+               .validity = FLANC_VALID},                                \
     }}
 
 #endif  /* FAKELOCKFREE */
