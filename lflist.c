@@ -1,5 +1,4 @@
 #define MODULE LFLISTM
-#define E_LFLISTM 1, BRK, LVL_TODO
 
 #include <atomics.h>
 #include <lflist.h>
