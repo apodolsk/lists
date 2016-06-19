@@ -5,7 +5,7 @@
 #include <nalloc.h>
 
 /* TODO: probably obsoleted by perf probe. */
-static volatile
+static
 dbg cnt
     enqs, enq_restarts, deqs, dels, del_restarts,
     pn_wins, naborts, paborts, prev_helps,
