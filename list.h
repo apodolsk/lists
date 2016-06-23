@@ -1,17 +1,17 @@
 #pragma once
 
 typedef volatile struct lanchor lanchor;
-
 struct lanchor{
     lanchor *n;
     lanchor *p;
 };
+
 #define LANCHOR(l) {                            \
         (l) ? &((list *) (l))->nil : NULL,      \
         (l) ? &((list *) (l))->nil : NULL       \
     }
 
-typedef volatile struct{
+typedef volatile struct list{
     lanchor nil;
     uptr size;
 } list;
@@ -48,7 +48,7 @@ lanchor *circlist_prev(lanchor *a, list *l);
 int lanchor_unused(lanchor *a);
 int lanchor_valid(lanchor *a, list *list);
 
-#define pudef (lanchor, "{%, %}", a->n, a->p)
+#define pudef (struct lanchor, "{%, %}", a->n, a->p)
 #include <pudef.h>
-#define pudef (list, "LIST{%, sz=%}", a->nil, a->size)
+#define pudef (struct list, "LIST{%, sz=%}", a->nil, a->size)
 #include <pudef.h>

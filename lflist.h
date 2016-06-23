@@ -6,9 +6,7 @@
 
 #include <nalloc.h>
 
-typedef volatile struct flanchor flanchor;
 typedef enum flstate flstate;
-
 typedef struct markp{
     uptr rsvd:1;
     uptr nil:1;
@@ -47,6 +45,7 @@ struct flx{
 } align(sizeof(dptr));
 #define FLX(as...) ((flx){as})
 
+typedef volatile struct flanchor flanchor;
 struct flanchor{
     volatile flx n;
     volatile flx p;
@@ -60,6 +59,8 @@ struct flanchor{
            2 + (FL_RDY << 2) + (uptr) (list) : FL_COMMIT << 2,          \
         .p.validity = FLANC_VALID,                                      \
     }
+
+
 
 typedef volatile struct lflist{
     flanchor nil;
@@ -112,12 +113,13 @@ const char *flstatestr(flstate s){
     return (const char *[]){"ADD", "RDY", "ABORT", "COMMIT"}[s];
 }
 
-#define pudef (flx, "{%:%:%, %:%}", (void *)(uptr)(a->pt << 4), (uptr) a->nil, \
+#define pudef (struct flx,                                              \
+               "{%:%:%, %:%}", (void *)(uptr)(a->pt << 4), (uptr) a->nil, \
                flstatestr(a->st), (uptr) a->gen, (uptr) a->validity)
 #include <pudef.h>
-#define pudef (flanchor, "n:%, p:%", a->n, a->p)
+#define pudef (struct flanchor, "n:%, p:%", a->n, a->p)
 #include <pudef.h>
-#define pudef (lflist, "LIST(%)", a->nil)
+#define pudef (struct lflist, "LIST(%)", a->nil)
 #include <pudef.h>
 
 #endif

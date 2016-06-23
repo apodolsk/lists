@@ -17,7 +17,7 @@ typedef struct{
     lflist *host;
 }stx;
 
-typedef align(sizeof(dptr)) volatile struct{
+typedef align(sizeof(dptr)) volatile struct flanchor{
     stx;
     lanchor lanc;
 } flanchor;
@@ -36,7 +36,7 @@ typedef int mgen;
 
 #define pudef (flx, "{%, %}", a->a, a->gen)
 #include <pudef.h>
-#define pudef (flanchor, "l:%, g:%", a->lanc, a->gen)
+#define pudef (struct flanchor, "l:%, g:%", a->lanc, a->gen)
 #include <pudef.h>
-#define pudef (lflist, "list{%}", a->l)
+#define pudef (struct lflist, "list{%}", a->l)
 #include <pudef.h>
