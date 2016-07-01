@@ -38,17 +38,18 @@ static err do_del(flx a, flx *p, type *t);
 #undef LOG_LFLISTM
 #define LOG_LFLISTM 0
 
-static inline
-flanchor *pt(flx a){
-    return (flanchor *) (uptr)(a.pt << 4);
-}
-#define mpt(flanc) ((uptr) (flanc) >> 4)
-
 static
 void countloops(cnt loops){
     if(MAX_LOOP && loops > MAX_LOOP)
         SUPER_RARITY("LOTTA LOOPS: %", loops);
 }
+
+static inline
+void profile_upd(volatile uptr *i){
+    if(PROFILE_LFLIST)
+        xadd(1, i);
+}
+
 
 static
 bool (progress)(flx *o, flx n, cnt loops){
@@ -58,15 +59,15 @@ bool (progress)(flx *o, flx n, cnt loops){
     return !eq;
 }
 
-static inline
+static inline constfun
+flanchor *pt(flx a){
+    return (flanchor *) (uptr)(a.pt << 4);
+}
+#define mpt(flanc) ((uptr) (flanc) >> 4)
+
+static inline constfun
 flx fl(flx p, flstate s, uptr gen){
     return (flx){.nil=p.nil, .st=s, .pt=p.pt, .validity=FLANC_VALID, .gen=gen};
-}
-
-static inline
-void profile_upd(volatile uptr *i){
-    if(PROFILE_LFLIST)
-        xadd(1, i);
 }
 
 static
@@ -550,6 +551,7 @@ err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
     }
 }
 
+constfun
 flanchor *flptr(flx a){
     assert(!a.nil);
     return pt(a);
