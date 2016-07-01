@@ -91,25 +91,25 @@ void (flinref_down)(flx *a, type *t){
    seg, so .rsvd=0. Then a is freed anew and a valid a->n.mgen is
    read. Wild access results. It'd suffice to add another reserved bit to
    x->markp. */
-/* static */
-/* flx readx(volatile flx *x){ */
-/*     flx r; */
-/*     r.markp = atomic_read(&x->markp); */
-/*     r.mgen = atomic_read(&x->mgen); */
-/*     if(r.validity != FLANC_VALID || r.rsvd) */
-/*         r = (flx){.st=COMMIT}; */
-/*     profile_upd(&reads); */
-/*     return r; */
-/* } */
-
 static
 flx readx(volatile flx *x){
-    flx r = atomic_read2(x);
+    flx r;
+    r.markp = atomic_read(&x->markp);
+    r.mgen = atomic_read(&x->mgen);
     if(r.validity != FLANC_VALID || r.rsvd)
         r = (flx){.st=COMMIT};
     profile_upd(&reads);
     return r;
 }
+
+/* static */
+/* flx readx(volatile flx *x){ */
+/*     flx r = atomic_read2(x); */
+/*     if(r.validity != FLANC_VALID || r.rsvd) */
+/*         r = (flx){.st=COMMIT}; */
+/*     profile_upd(&reads); */
+/*     return r; */
+/* } */
 
 static
 bool eqx(volatile flx *a, flx *b){
@@ -124,45 +124,53 @@ bool gen_eq(mgen a, mgen ref){
     return a.gen == ref.gen && a.validity == FLANC_VALID;
 }
 
-#define raw_casx(as...) raw_casx(__func__, __LINE__, as)
+#define raw_casx_won(as...) raw_casx_won(__func__, __LINE__, as)
 static
-flx (raw_casx)(const char *f, int l, flx n, volatile flx *a, flx e){
-    flx ne = cas2(n, a, e);
-    if(eq2(e, ne))
+bool (raw_casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
+    if(cas2_won(n, a, e)){
         log(2, "%:%- % => % p:%", f, l, e, n, (void *) a);
-    if(!eq2(ne, e))
-        profile_upd(&cas_fails);
-    if(ne.rsvd || ne.validity != FLANC_VALID)
-        ne = (flx){};
-    return ne;
+        return true;
+    }
+    
+    profile_upd(&cas_fails);
+    if(e->rsvd || e->validity != FLANC_VALID)
+        *e = (flx){};
+    return false;
 }
 
-#define casx(as...) casx(__func__, __LINE__, as)
+#define casx_won(as...) casx_won(__func__, __LINE__, as)
 static
-flx (casx)(const char *f, int l, flx n, volatile flx *a, flx e){
-    assert(!eq2(n, e));
+bool (casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
+    assert(!eq2(n, *e));
     assert(aligned_pow2(pt(n), alignof(flanchor)));
-    assert(n.validity == FLANC_VALID && e.validity == FLANC_VALID);
-    assert(!n.rsvd && !e.rsvd);
+    assert(n.validity == FLANC_VALID && e->validity == FLANC_VALID);
+    assert(!n.rsvd && !e->rsvd);
     assert(pt(n) || n.st >= ABORT);
     assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
     profile_upd(&cas_ops);
     
-    flx ne = (raw_casx)(f, l, n, a, e);
+    bool r = (raw_casx_won)(f, l, n, a, e);
 
     if_dbg(flanc_valid(cof_aligned_pow2(a, flanchor)));
-    return ne;
+    return r;
+}
+
+#define updx_won(as...) updx_won(__func__, __LINE__, as)
+static
+bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
+    if((casx_won)(f, l, n, a, e)){
+        *e = n;
+        return true;
+    }
+    return false;
 }
 
 #define updx_ok(as...) updx_ok(__func__, __LINE__, as)
 static
 howok (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
-    flx oe = *e;
-    if(eq2(*e = (casx)(f, l, n, a, *e), oe))
-        return *e = n, WON;
-    if(eq2(*e, n))
-        return OK;
-    return NOT;
+    if((updx_won)(f, l, n, a, e))
+        return WON;
+    return eq2(*e, n) ? OK : NOT;
 }
 
 #define updx_ok_modst(as...) updx_ok_modst(__func__, __LINE__, as)
@@ -176,12 +184,6 @@ howok (updx_ok_modst)(const char *f, int l,
     if(eq2(*e, rup(oe, .st=st)))
         return (updx_ok)(f, l, rup(n, .st=nst), a, e);
     return NOT;
-}
-
-#define updx_won(as...) updx_won(__func__, __LINE__, as)
-static
-bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
-    return WON == (updx_ok)(f, l, n, a, e);
 }
 
 static
@@ -300,7 +302,7 @@ void (finish_del)(flx a, flx *p, const flx *n_opt, const flx *np_opt, type *t){
             if(!eqx(&pt(a)->p, p))
                 goto finish;
             if(pt(nnp) == pt(a))
-                casx(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, nnp);
+                casx_won(fl(n, RDY, nnp.gen + 1), &pt(nn)->p, &nnp);
         }
     }
 
@@ -362,8 +364,8 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
             break;
     }
     if(won){
-        casx(fl(a, RDY, p.gen + 1), &l->nil.p, p);
-        casx(rup(ap, .st=RDY), &pt(a)->p, ap);
+        casx_won(fl(a, RDY, p.gen + 1), &l->nil.p, (flx []){p});
+        casx_won(rup(ap, .st=RDY), &pt(a)->p, (flx []){ap});
     }
     
     flinref_down(&p, t);
@@ -570,10 +572,8 @@ bool (mgen_upd_won)(mgen g, flx a, type *t){
            !gen_eq(pt(a)->p.mgen, a.mgen));
     for(flx p = readx(&pt(a)->p); gen_eq(p.mgen, a.mgen);){
         assert(p.st == COMMIT);
-        flx n = raw_casx(rup(p, .mgen=g), &pt(a)->p, p);
-        if(eq2(n, p))
+        if(raw_casx_won(rup(p, .mgen=g), &pt(a)->p, &p))
             return true;
-        p = n;
     }
     return false;
 }

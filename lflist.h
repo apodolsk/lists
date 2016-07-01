@@ -20,7 +20,7 @@ typedef struct markp{
 } markp;
 
 #define FLANC_VALID 0b10
-typedef struct{
+typedef struct mgen{
     uptr validity: 2;
     uptr gen: WORDBITS - 2;
 } mgen;
@@ -28,7 +28,8 @@ typedef struct{
 typedef struct flx flx;
 struct flx{
     union {
-        markp;
+        struct markp;
+        markp markp;
         
         /* It's implementation-defined in C11 (6.6) whether you can cast
            addresses in constant expressions. GCC/CLANG do as an
@@ -41,7 +42,10 @@ struct flx{
            as in LFLIST(). */
         uptr constexp;
     };
-    mgen;
+    union{
+        struct mgen;
+        mgen mgen;
+    };
 } align(sizeof(dptr));
 #define FLX(as...) ((flx){as})
 

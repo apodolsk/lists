@@ -12,13 +12,16 @@ typedef volatile struct lflist{
         .mut = PTHREAD_MUTEX_INITIALIZER        \
     }
 
-typedef struct{
+typedef struct stx{
     uptr gen;
     lflist *host;
 }stx;
 
 typedef align(sizeof(dptr)) volatile struct flanchor{
-    stx;
+    union{
+        struct stx;
+        stx stx;
+    };
     struct lanchor lanc;
 } flanchor;
 #define FLANCHOR(list)                          \
