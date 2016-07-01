@@ -47,8 +47,8 @@ struct flx{
 
 typedef volatile struct flanchor flanchor;
 struct flanchor{
-    volatile flx n;
-    volatile flx p;
+    flx n;
+    flx p;
 } align(2 * sizeof(dptr));
 #define FLANCHOR(list){                                                 \
         .n.constexp = (list)                                            \
@@ -63,7 +63,7 @@ struct flanchor{
 
 
 typedef volatile struct lflist{
-    flanchor nil;
+    struct flanchor nil;
 }lflist;
 #define LFLIST(l, elem){                                                \
         {.n = {.constexp = (elem)                                       \

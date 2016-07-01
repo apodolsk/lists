@@ -12,7 +12,7 @@ struct lanchor{
     }
 
 typedef volatile struct list{
-    lanchor nil;
+    struct lanchor nil;
     uptr size;
 } list;
 #define LIST(l, elem) {                         \

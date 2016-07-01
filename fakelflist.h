@@ -4,7 +4,7 @@
 #include <pthread.h>
 
 typedef volatile struct lflist{
-    list l;
+    struct list l;
     pthread_mutex_t mut;
 } lflist;
 #define LFLIST(self, elem){                     \
@@ -19,7 +19,7 @@ typedef struct{
 
 typedef align(sizeof(dptr)) volatile struct flanchor{
     stx;
-    lanchor lanc;
+    struct lanchor lanc;
 } flanchor;
 #define FLANCHOR(list)                          \
     {.lanc = LANCHOR(list), .host = list}
