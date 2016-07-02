@@ -216,7 +216,7 @@ static
 err (do_del)(flx a, flx *p, type *t){
     assert(a.validity == FLANC_VALID);
     profile_upd(&dels);
-    
+
     howok pn_ok = NOT;
     bool del_won = false;
     flx pn = {}, refp = {}, refpp = {};
@@ -227,6 +227,7 @@ err (do_del)(flx a, flx *p, type *t){
             ppl(2, n, np);
             break;
         }
+
         assert(pt(np) == pt(a));
         if(help_prev(a, p, &pn, &refp, &refpp, t)){
             ppl(2, *p, pn);
