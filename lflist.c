@@ -97,8 +97,8 @@ flx readx(volatile flx *x){
     flx r;
     r.markp = atomic_read(&x->markp);
     r.mgen = atomic_read(&x->mgen);
-    if(r.validity != FLANC_VALID || r.rsvd)
-        r = (flx){.st=COMMIT};
+    /* if(r.validity != FLANC_VALID || r.rsvd) */
+    /*     r = (flx){.st=COMMIT}; */
     profile_upd(&reads);
     return r;
 }
@@ -122,7 +122,8 @@ bool eqx(volatile flx *a, flx *b){
 static
 bool gen_eq(mgen a, mgen ref){
     assert(ref.validity == FLANC_VALID);
-    return a.gen == ref.gen && a.validity == FLANC_VALID;
+    return a.gen == ref.gen;
+    /* return a.gen == ref.gen && a.validity == FLANC_VALID; */
 }
 
 #define raw_casx_won(as...) raw_casx_won(__func__, __LINE__, as)
@@ -134,8 +135,8 @@ bool (raw_casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     }
     
     profile_upd(&cas_fails);
-    if(e->rsvd || e->validity != FLANC_VALID)
-        *e = (flx){};
+    /* if(e->rsvd || e->validity != FLANC_VALID) */
+    /*     *e = (flx){}; */
     return false;
 }
 
@@ -203,6 +204,7 @@ err (refupd)(flx *a, flx *held, volatile flx *src, type *t){
     return -1;
 }
 
+flat
 err (lflist_del)(flx a, type *t){
     assert(!a.nil);
     
@@ -465,7 +467,7 @@ flx (lflist_deq)(type *t, lflist *l){
     }
 }
 
-static 
+static ainline
 err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
     for(flx on = *refn;; assert(progress(&on, *n, 0))){
         do if(!pt(*n)) return -1;
@@ -489,7 +491,7 @@ err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
     }
 }
 
-static 
+static ainline
 err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
     flx op = {};
     for(cnt pl = 0;; assert(progress(&op, *p, pl++))){
