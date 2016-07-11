@@ -16,15 +16,16 @@ dbg cnt
 
 #define PROFILE_LFLIST 0
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
-#define MAX_LOOP 256
+#define MAX_LOOP 0
 
 #define ADD FL_ADD
 #define ABORT FL_ABORT
 #define RDY FL_RDY
 #define COMMIT FL_COMMIT
 
-static err help_next(flx a, flx *n, flx *np, flx *refn, type *t);
-static err help_prev(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t);
+static err help_next(flx a, flx *n, flx *np, flanchor **refn, type *t);
+static err help_prev(flx a, flx *p, flx *pn,
+                     flanchor **refp, flanchor **refpp, type *t);
 static void finish_del(flx a, flx *p, const flx *n, const flx *np, type *t);
 static err do_del(flx a, flx *p, type *t);
 
@@ -32,7 +33,6 @@ static err do_del(flx a, flx *p, type *t);
 #define do_del(as...) trace(LFLISTM, 2, do_del, as)
 #define help_prev(as...) trace(LFLISTM, 3, help_prev, as)
 #define refupd(as...) trace(LFLISTM, 4, refupd, as)
-#define flinref_up(as...) trace(LFLISTM, 5, flinref_up, as)
 #define flinref_down(as...) trace(LFLISTM, 5, flinref_down, as)
 
 #undef LOG_LFLISTM
@@ -63,28 +63,11 @@ static inline constfun
 flanchor *pt(flx a){
     return (flanchor *) (uptr)(a.pt << 4);
 }
-#define mpt(flanc) ((uptr) (flanc) >> 4)
+#define to_pt(flanc) ((uptr) (flanc) >> 4)
 
 static inline constfun
 flx fl(flx p, flstate s, uptr gen){
     return (flx){.nil=p.nil, .st=s, .pt=p.pt, .validity=FLANC_VALID, .gen=gen};
-}
-
-static
-err (flinref_up)(flx a, type *t){
-    assert(pt(a));
-    profile_upd(&flinrefs);
-    if(a.nil || !linref_up(pt(a), t))
-        return 0;
-    profile_upd(&flinref_fails);
-    return -1;
-}
-
-static
-void (flinref_down)(flx *a, type *t){
-    if(!a->nil && pt(*a))
-        linref_down(pt(*a), t);
-    *a = (flx){};
 }
 
 /* TODO: the only issue with this is a race involving validity bits:
@@ -145,10 +128,10 @@ static
 bool (casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     assert(!eq2(n, *e));
     assert(aligned_pow2(pt(n), alignof(flanchor)));
-    assert(n.validity == FLANC_VALID && e->validity == FLANC_VALID);
-    assert(!n.rsvd && !e->rsvd);
     assert(pt(n) || n.st >= ABORT);
     assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
+    assert(n.validity == FLANC_VALID && e->validity == FLANC_VALID);
+    assert(!n.rsvd && !e->rsvd);
     profile_upd(&cas_ops);
     
     bool r = (raw_casx_won)(f, l, n, a, e);
@@ -189,14 +172,22 @@ howok (updx_ok_modst)(const char *f, int l,
 }
 
 static
-err (refupd)(flx *a, flx *held, volatile flx *src, type *t){
+void (flinref_down)(flanchor *a, type *t){
+    if(!a)
+        return;
+    linref_down(a, t);
+}
+
+static
+err (refupd)(flx *a, flanchor **held, volatile flx *src, type *t){
     if(!pt(*a))
         return -1;
-    if(pt(*a) == pt(*held))
+    if(pt(*a) == *held)
         return 0;
-    flinref_down(held, t);
-    if(!flinref_up(*a, t)){
-        *held = *a;
+    flinref_down(*held, t);
+    *held = NULL;
+    if(a->nil || !linref_up(pt(*a), t)){
+        *held = pt(*a);
         return 0;
     }
     if(eqx(src, a))
@@ -221,9 +212,13 @@ err (do_del)(flx a, flx *p, type *t){
 
     howok pn_ok = NOT;
     bool del_won = false;
-    flx pn = {}, refp = {}, refpp = {};
+    flx np,
+        pn = {},
+        n = readx(&pt(a)->n);
+    flanchor *refn = NULL,
+             *refp = NULL,
+             *refpp = NULL;
 
-    flx np, refn = {}, n = readx(&pt(a)->n);
     for(int l = 0;; countloops(l++), profile_upd(&del_restarts)){
         if(help_next(a, &n, &np, &refn, t)){
             ppl(2, n, np);
@@ -267,9 +262,9 @@ err (do_del)(flx a, flx *p, type *t){
 
 done:
     
-    flinref_down(&refn, t);
-    flinref_down(&refp, t);
-    flinref_down(&refpp, t);
+    flinref_down(refn, t);
+    flinref_down(refp, t);
+    flinref_down(refpp, t);
     return -!del_won;
 }
 
@@ -281,7 +276,7 @@ void (finish_del)(flx a, flx *p, const flx *n_opt, const flx *np_opt, type *t){
     flx np, n;
     if(!np_opt){
         n = readx(&pt(a)->n);
-        if(!pt(n) || refupd(&n, &(flx){}, &pt(a)->n, t))
+        if(!pt(n) || refupd(&n, (flanchor *[]){}, &pt(a)->n, t))
             return;
         np = readx(&pt(n)->p);
         *p = readx(&pt(a)->p);
@@ -312,7 +307,7 @@ void (finish_del)(flx a, flx *p, const flx *n_opt, const flx *np_opt, type *t){
 
 finish:
     if(!np_opt)
-        flinref_down(&n, t);
+        flinref_down(pt(n), t);
     return;
 }
 
@@ -343,15 +338,18 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     assert(n.st == COMMIT || n.st == ADD);
     flx nil = {.nil=1,
                .st=ADD,
-               .pt=mpt(&l->nil),
+               .pt=to_pt(&l->nil),
                .validity=FLANC_VALID,
                .gen=n.gen + 1};
     while(!updx_won(fl(nil, ADD, n.gen + 1), &pt(a)->n, &n))
         if(!eqx(&pt(a)->p, &ap))
             return -1;
 
-    flx op = {}, opn = {}, refpp = {}, pn = {}, refp = {};
-    flx p = readx(&pt(nil)->p);
+    flx p = readx(&pt(nil)->p),
+        pn = {};
+    dbg flx op = {},
+            opn = {};
+    flanchor *refp = NULL, *refpp = NULL;
     bool won = false;
     for(int c = 0;;
         profile_upd(&enq_restarts),
@@ -368,12 +366,12 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
             break;
     }
     if(won){
-        casx_won(fl(a, RDY, p.gen + 1), &l->nil.p, (flx []){p});
-        casx_won(rup(ap, .st=RDY), &pt(a)->p, (flx []){ap});
+        casx_won(fl(a, RDY, p.gen + 1), &l->nil.p, &p);
+        casx_won(rup(ap, .st=RDY), &pt(a)->p, &ap);
     }
     
-    flinref_down(&p, t);
-    flinref_down(&refpp, t);
+    flinref_down(refp, t);
+    flinref_down(refpp, t);
     return -!won;
 }
 
@@ -450,15 +448,16 @@ skip_del:;
 flx (lflist_deq)(type *t, lflist *l){
     profile_upd(&deqs);
     
-    flx a = {.nil=1,.pt=mpt(&l->nil)};
+    flx a = {.nil=1,.pt=to_pt(&l->nil)};
     flx on = {};
     for(cnt lps = 0;;){
         flx np = {}, n = readx(&pt(a)->n);
         do{
-            if(help_next(a, &n, &np, (flx[]){on}, t))
+            if(help_next(a, &n, &np, (flanchor *[]){pt(on)}, t))
                 EWTF();
             if(n.nil || !progress(&on, n, lps++))
-                return flinref_down(&n, t), (flx){};
+                return flinref_down(pt(n), t),
+                       (flx){};
         }while(!eqx(&pt(a)->n, &n));
         
         flx r = {.pt=n.pt, .mgen=np.mgen};
@@ -468,8 +467,8 @@ flx (lflist_deq)(type *t, lflist *l){
 }
 
 static ainline
-err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
-    for(flx on = *refn;; assert(progress(&on, *n, 0))){
+err (help_next)(flx a, flx *n, flx *np, flanchor **refn, type *t){
+    for(flx on = *n;; assert(progress(&on, *n, 0))){
         do if(!pt(*n)) return -1;
         while(refupd(n, refn, &pt(a)->n, t));
 
@@ -492,10 +491,10 @@ err (help_next)(flx a, flx *n, flx *np, flx *refn, type *t){
 }
 
 static ainline
-err (help_prev)(flx a, flx *p, flx *pn, flx *refp, flx *refpp, type *t){
+err (help_prev)(flx a, flx *p, flx *pn, flanchor **refp, flanchor **refpp, type *t){
     flx op = {};
     for(cnt pl = 0;; assert(progress(&op, *p, pl++))){
-        if(!pt(*refp))
+        if(!*refp)
             goto newp;
         for(cnt pnl = 0;; countloops(pl + pnl++)){
         readp:
@@ -561,7 +560,7 @@ flanchor *flptr(flx a){
 }
 
 flx flx_of(flanchor *a){
-    return (flx){.pt = mpt(a), .mgen=a->p.mgen};
+    return (flx){.pt = to_pt(a), .mgen=a->p.mgen};
 }
 
 void (flanc_ordered_init)(uptr g, flanchor *a){
@@ -670,46 +669,6 @@ bool flanc_valid(flanchor *a){
                np->n.st == COMMIT &&
                np->p.st == RDY));
     assert((px.st != COMMIT && px.st != ABORT) || pn != a);
-           
-    /* TODO: probably not worth maintaining these. Failure here could be
-       an out-of-date assert. */
-    switch(px.st){
-    case ADD:
-        assert(nx.st == ADD || nx.st == RDY);
-        break;
-    case RDY:
-        assert(pn == a || nx.st == COMMIT || nx.st == ADD);
-        break;
-    case ABORT:
-        assert(pn != a && (nx.st == COMMIT || nx.st == ADD));
-        break;
-    case COMMIT:
-        assert(pn != a);
-        assert(np != a);
-        assert(!nn || pt(nn->p) != a);
-        break;
-    }
-
-    switch(nx.st){
-    case ADD:
-        assert(nx.nil);
-        assert(px.st != RDY || pn == a);
-        break;
-    case RDY: case ABORT:
-        assert(pn == a);
-        assert(np == a
-               || (pt(np->p) == a &&
-                   np->n.st == COMMIT &&
-                   (np->p.st == RDY || np->p.st == ABORT)));
-        break;
-    case COMMIT:
-        assert((pn == a && np == a) ||
-               (pn == n && np == a) ||
-               (pn == n && np == p) ||
-               (pn != a && np != a));
-        break;
-    }
-
     
     /* Sniff out unpaused universe or reordering weirdness. */
     assert(eq2(a->p, px));
