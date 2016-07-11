@@ -46,7 +46,7 @@ struct flx{
         struct mgen;
         mgen mgen;
     };
-} align(sizeof(dptr));
+};
 #define FLX(as...) ((flx){as})
 
 typedef volatile struct flanchor flanchor;

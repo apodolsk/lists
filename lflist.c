@@ -78,8 +78,12 @@ flx fl(flx p, flstate s, uptr gen){
 static
 flx readx(volatile flx *x){
     flx r;
-    r.markp = atomic_read(&x->markp);
-    r.mgen = atomic_read(&x->mgen);
+    /* r.markp = atomic_read(&x->markp); */
+    /* r.mgen = atomic_read(&x->mgen); */
+
+    r.markp = x->markp;
+    r.mgen = x->mgen;
+    
     /* if(r.validity != FLANC_VALID || r.rsvd) */
     /*     r = (flx){.st=COMMIT}; */
     profile_upd(&reads);
@@ -110,12 +114,31 @@ bool gen_eq(mgen a, mgen ref){
 }
 
 #define raw_casx_won(as...) raw_casx_won(__func__, __LINE__, as)
+#include <stdatomic.h>
 static
 bool (raw_casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
-    if(cas2_won(n, a, e)){
+    /* if(__atomic_compare_exchange(a, e, &n, */
+    /*                              0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){ */
+    /*     log(2, "%:%- % => % p:%", f, l, e, n, (void *) a); */
+    /*     return true; */
+    /* } */
+
+    /* if(__atomic_compare_exchange((dptr  *) a, e, &n, */
+    /*                              0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){ */
+    /*     log(2, "%:%- % => % p:%", f, l, e, n, (void *) a); */
+    /*     return true; */
+    /* } */
+
+    if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
         log(2, "%:%- % => % p:%", f, l, e, n, (void *) a);
         return true;
     }
+
+    
+    /* if(cas2_won(n, a, e)){ */
+    /*     log(2, "%:%- % => % p:%", f, l, e, n, (void *) a); */
+    /*     return true; */
+    /* } */
     
     profile_upd(&cas_fails);
     /* if(e->rsvd || e->validity != FLANC_VALID) */
@@ -205,10 +228,13 @@ err (lflist_del)(flx a, type *t){
     return (do_del)(a, &p, t);
 }
 
-static
+static flat
 err (do_del)(flx a, flx *p, type *t){
     assert(a.validity == FLANC_VALID);
     profile_upd(&dels);
+
+    if(a.nil || (uptr) pt(a) != a.pt)
+        __builtin_unreachable();
 
     howok pn_ok = NOT;
     bool del_won = false;
@@ -466,7 +492,7 @@ flx (lflist_deq)(type *t, lflist *l){
     }
 }
 
-static ainline
+static
 err (help_next)(flx a, flx *n, flx *np, flanchor **refn, type *t){
     for(flx on = *n;; assert(progress(&on, *n, 0))){
         do if(!pt(*n)) return -1;
@@ -490,7 +516,7 @@ err (help_next)(flx a, flx *n, flx *np, flanchor **refn, type *t){
     }
 }
 
-static ainline
+static
 err (help_prev)(flx a, flx *p, flx *pn, flanchor **refp, flanchor **refpp, type *t){
     flx op = {};
     for(cnt pl = 0;; assert(progress(&op, *p, pl++))){
