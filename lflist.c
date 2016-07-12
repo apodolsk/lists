@@ -198,6 +198,8 @@ static
 void (flinref_down)(flanchor *a, type *t){
     if(!a)
         return;
+    /* todo */
+    return;
     linref_down(a, t);
 }
 
@@ -208,7 +210,11 @@ err (refupd)(flx *a, flanchor **held, volatile flx *src, type *t){
     if(pt(*a) == *held)
         return 0;
     flinref_down(*held, t);
-    *held = NULL;
+
+    /* TODO: */
+    *held = pt(*a);
+    return 0;
+    
     if(a->nil || !linref_up(pt(*a), t)){
         *held = pt(*a);
         return 0;
@@ -235,6 +241,7 @@ err (do_del)(flx a, flx *p, type *t){
 
     if(a.nil || (uptr) pt(a) != a.pt)
         __builtin_unreachable();
+    else{
 
     howok pn_ok = NOT;
     bool del_won = false;
@@ -286,12 +293,14 @@ err (do_del)(flx a, flx *p, type *t){
     else if(pt(np) == pt(a)) profile_upd(&paborts);
     else if(pt(np) != pt(a)) profile_upd(&naborts);
 
+
 done:
     
     flinref_down(refn, t);
     flinref_down(refp, t);
     flinref_down(refpp, t);
     return -!del_won;
+    }
 }
 
 static 
@@ -494,13 +503,12 @@ flx (lflist_deq)(type *t, lflist *l){
 
 static
 err (help_next)(flx a, flx *n, flx *np, flanchor **refn, type *t){
-    for(flx on = *n;; assert(progress(&on, *n, 0))){
+    for(;;){
         do if(!pt(*n)) return -1;
         while(refupd(n, refn, &pt(a)->n, t));
 
-        flx onp = *np = readx(&pt(*n)->p);
-        for(cnt l = 0;; assert(progress(&onp, *np, l++)))
-        {
+        *np = readx(&pt(*n)->p);
+        for(;;){
             if(pt(*np) == pt(a) && np->st < ABORT)
                 return 0;
             if(!eqx(&pt(a)->n, n))
@@ -518,11 +526,10 @@ err (help_next)(flx a, flx *n, flx *np, flanchor **refn, type *t){
 
 static
 err (help_prev)(flx a, flx *p, flx *pn, flanchor **refp, flanchor **refpp, type *t){
-    flx op = {};
-    for(cnt pl = 0;; assert(progress(&op, *p, pl++))){
+    for(;;){
         if(!*refp)
             goto newp;
-        for(cnt pnl = 0;; countloops(pl + pnl++)){
+        for(;;){
         readp:
             if(!eqx(&pt(a)->p, p))
                 break;
@@ -546,8 +553,8 @@ err (help_prev)(flx a, flx *p, flx *pn, flanchor **refp, flanchor **refpp, type 
                    goto readp;
             while(refupd(&pp, refpp, &pt(*p)->p, t));
             
-            flx ppn = readx(&pt(pp)->n), oppn = {};
-            for(cnt ppnl = 0;;progress(&oppn, ppn, pl + pnl + ppnl++)){
+            flx ppn = readx(&pt(pp)->n);
+            for(;;){
                 if(!eqx(&pt(*p)->p, &pp))
                     goto newpp;
                 if(pt(ppn) != pt(*p) && pt(ppn) != pt(a))
