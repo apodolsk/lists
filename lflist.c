@@ -4,14 +4,6 @@
 #include <lflist.h>
 #include <nalloc.h>
 
-/* TODO: probably obsoleted by perf probe. */
-static
-dbg cnt
-    enqs, enq_restarts, deqs, dels, del_restarts,
-    pn_wins, naborts, paborts, prev_helps,
-    prev_help_attempts, cas_ops, cas_fails,
-    reads, nnp_help_attempts, flinrefs, flinref_fails;
-
 #ifndef FAKELOCKFREE
 
 #define PROFILE_LFLIST 0
@@ -43,13 +35,6 @@ void countloops(cnt loops){
     if(MAX_LOOP && loops > MAX_LOOP)
         SUPER_RARITY("LOTTA LOOPS: %", loops);
 }
-
-static inline
-void profile_upd(volatile uptr *i){
-    if(PROFILE_LFLIST)
-        xadd(1, i);
-}
-
 
 static
 bool (progress)(flx *o, flx n, cnt loops){
@@ -86,7 +71,6 @@ flx readx(volatile flx *x){
     
     /* if(r.validity != FLANC_VALID || r.rsvd) */
     /*     r = (flx){.st=COMMIT}; */
-    profile_upd(&reads);
     return r;
 }
 
@@ -133,14 +117,13 @@ bool (raw_casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
         log(2, "%:%- % => % p:%", f, l, e, n, (void *) a);
         return true;
     }
-
+    return true;
     
     /* if(cas2_won(n, a, e)){ */
     /*     log(2, "%:%- % => % p:%", f, l, e, n, (void *) a); */
     /*     return true; */
     /* } */
     
-    profile_upd(&cas_fails);
     /* if(e->rsvd || e->validity != FLANC_VALID) */
     /*     *e = (flx){}; */
     return false;
@@ -155,7 +138,6 @@ bool (casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
     assert(n.validity == FLANC_VALID && e->validity == FLANC_VALID);
     assert(!n.rsvd && !e->rsvd);
-    profile_upd(&cas_ops);
     
     bool r = (raw_casx_won)(f, l, n, a, e);
 
@@ -234,15 +216,13 @@ err (lflist_del)(flx a, type *t){
     return (do_del)(a, &p, t);
 }
 
+static inline void (prefetch)(volatile void *a){
+    asm volatile("prefetchw %0":: "m"(*a));
+}
+
 static flat
 err (do_del)(flx a, flx *p, type *t){
     assert(a.validity == FLANC_VALID);
-    profile_upd(&dels);
-
-    if(a.nil || (uptr) pt(a) != a.pt)
-        __builtin_unreachable();
-    else{
-
     howok pn_ok = NOT;
     bool del_won = false;
     flx np,
@@ -251,8 +231,8 @@ err (do_del)(flx a, flx *p, type *t){
     flanchor *refn = NULL,
              *refp = NULL,
              *refpp = NULL;
-
-    for(int l = 0;; countloops(l++), profile_upd(&del_restarts)){
+    
+    for(;;){
         if(help_next(a, &n, &np, &refn, t)){
             ppl(2, n, np);
             break;
@@ -289,18 +269,12 @@ err (do_del)(flx a, flx *p, type *t){
         if(!updx_ok(rup(*p, .nil=0, .pt=0, .st=COMMIT), &pt(a)->p, p))
             assert(!gen_eq(p->mgen, a.mgen));
 
-    if(pn_ok == WON) profile_upd(&pn_wins);
-    else if(pt(np) == pt(a)) profile_upd(&paborts);
-    else if(pt(np) != pt(a)) profile_upd(&naborts);
-
-
 done:
     
     flinref_down(refn, t);
     flinref_down(refp, t);
     flinref_down(refpp, t);
     return -!del_won;
-    }
 }
 
 static 
@@ -329,7 +303,6 @@ void (finish_del)(flx a, flx *p, const flx *n_opt, const flx *np_opt, type *t){
         updx_ok_modst(RDY, RDY, fl(*p, np.st, np.gen + n.nil), &pt(n)->p, &np);
 
     if(pt(np) && np.st == ADD && gen_eq(np.mgen, onp.mgen)){
-        profile_upd(&nnp_help_attempts);
         flx nn = readx(&pt(n)->n);
         if(nn.nil && nn.st == ADD){
             flx nnp = readx(&pt(nn)->p);
@@ -359,8 +332,6 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 }
 
 err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
-    profile_upd(&enqs);
-
     assert(a.validity == FLANC_VALID);
 
     flx ap;
@@ -382,14 +353,9 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
 
     flx p = readx(&pt(nil)->p),
         pn = {};
-    dbg flx op = {},
-            opn = {};
     flanchor *refp = NULL, *refpp = NULL;
     bool won = false;
-    for(int c = 0;;
-        profile_upd(&enq_restarts),
-        assert(progress(&op, p, c++) | progress(&opn, pn, 0)))
-    {
+    for(;;){
         muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
         if(!upd2_won(fl(p, ADD, ap.gen), &pt(a)->p, &ap))
             break;
@@ -481,8 +447,6 @@ skip_del:;
 }
 
 flx (lflist_deq)(type *t, lflist *l){
-    profile_upd(&deqs);
-    
     flx a = {.nil=1,.pt=to_pt(&l->nil)};
     flx on = {};
     for(cnt lps = 0;;){
@@ -548,7 +512,6 @@ err (help_prev)(flx a, flx *p, flx *pn, flanchor **refp, flanchor **refpp, type 
         readpp:;
             flx pp = readx(&pt(*p)->p);
         newpp:;
-            profile_upd(&prev_help_attempts);
             do if(!pt(pp) || pp.st != RDY)
                    goto readp;
             while(refupd(&pp, refpp, &pt(*p)->p, t));
@@ -572,8 +535,7 @@ err (help_prev)(flx a, flx *p, flx *pn, flanchor **refp, flanchor **refpp, type 
                 if(pn->st == ABORT)
                     return 0;
 
-                if(updx_won(fl(a, ppn.st, ppn.gen + 1), &pt(pp)->n, &ppn))
-                    profile_upd(&prev_helps);
+                updx_won(fl(a, ppn.st, ppn.gen + 1), &pt(pp)->n, &ppn);
             }
         }
     newp:;
@@ -656,14 +618,12 @@ bool flanc_valid(flanchor *a){
     volatile flx
         pnx = readx(&p->n),
         ppx = readx(&p->p),
-        npx = readx(&n->p),
-        nnx = readx(&n->n);
+        npx = readx(&n->p);
     
 
     flanchor
         *volatile pn = pt(pnx),
-        *volatile np = pt(npx),
-        *volatile nn = pt(nnx);
+        *volatile np = pt(npx);
 
     bool nil = false;
     if(np == a)
@@ -710,36 +670,5 @@ bool flanc_valid(flanchor *a){
     resume_universe();
     return true;
 }
-
-void lflist_report_profile(void){
-    if(!PROFILE_LFLIST)
-        return;
-    /* TODO: doesn't take jam into account */
-    /* TODO: way out of date. */
-    /* double ideal_reads = (4 * enqs + 5 * dels + 7 * deqs); */
-    /* double ideal_casx = (4 * enqs + 3 * dels + 3 * deqs); */
-    lppl(0, enqs, 
-         (double) enq_restarts/enqs,
-         deqs,
-         dels,
-         (double) del_restarts/dels,
-         (double) pn_wins/dels,
-         (double) naborts/dels,
-         (double) paborts/dels,
-         (double) nnp_help_attempts/dels,
-         cas_ops,
-         /* (double) cas_ops/ideal_casx, */
-         /* ideal_casx, */
-         (double) cas_fails/cas_ops,
-         (double) prev_help_attempts/enqs,
-         (double) prev_helps/prev_help_attempts,
-         reads,
-         flinrefs,
-         (double) flinrefs/flinref_fails
-         /* (double) reads/ideal_reads */
-         );
-
-}
-
 
 #endif
