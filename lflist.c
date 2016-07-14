@@ -112,7 +112,7 @@ bool (raw_casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* } */
     
     if(cas2_won(n, a, e)){
-        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        log(2, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         return true;
     }
     
@@ -204,6 +204,9 @@ err (lflist_del)(flx a, type *t){
 static flat
 err (lflist_del_upd)(flx a, flx *p, mgen ng, type *t){
     assert(a.validity == FLANC_VALID);
+
+    if(!gen_eq(p->mgen, a.mgen))
+        return -1;
     
     markp refn = {},
           refp = {},
@@ -242,12 +245,15 @@ done:
     if(n.st == ADD)
         return -1;
 
-    ppl(0, n, *p, np, pn);
+    /* ppl(0, n, *p, np, pn); */
     while(p->st != ADD && gen_eq(p->mgen, a.mgen)){
         if(p->st == COMMIT && gen_eq(a.mgen, ng))
             return -1;
+        flx op = op;
         if(updx_won(rup(*p, .nil=0, .pt=0, .st=COMMIT, .mgen = ng), &pt(a)->p, p))
             return 0;
+        if(op.st == ABORT)
+            return -1;
     }
     return -1;
 }
