@@ -261,46 +261,44 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 
 err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     assert(a.validity == FLANC_VALID);
-
-    flx ap = readx(&pt(a)->p);
-    if(ap.st != COMMIT || !gen_eq(ap.mgen, a.mgen))
-        return -1;
-    
-    flx n = readx(&pt(a)->n);
-    if(!updx_won(fl(ap, ABORT, ng), &pt(a)->p, &ap))
-        return -1;
-
-    assert(n.st == COMMIT || n.st == ADD);
     flx nil = {.nil=1,
                .st=ADD,
                .pt=to_pt(&l->nil),
                .validity=FLANC_VALID,
                .gen=n.gen + 1};
-    while(!updx_won(fl(nil, ADD, n.gen + 1), &pt(a)->n, &n))
-        if(!eqx(&pt(a)->p, &ap))
-            return -1;
+
+
+    flx n = readx(&pt(a)->n);
+    flx ap = readx(&pt(a)->p);
+    if(ap.st != COMMIT || !gen_eq(ap.mgen, a.mgen))
+        return -1;
 
     flx p = readx(&pt(nil)->p),
         pn = {};
     markp refp = {},
           refpp = {};
+    muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
+
     bool won = false;
-    for(;;){
+    if(!upd2_won(fl(p, ADD, ap.gen), &pt(a)->p, &ap))
+        goto done;
+    won = true;
+
+    while(!updx_won(fl(nil, ADD, n.gen + 1), &pt(a)->n, &n))
+        if(!eq(pt(a)->p, ap))
+            goto done;
+
+    while(!updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1),
+                    &pt(p)->n,
+                    &pn)){
         muste(help_prev(nil, &p, &pn, &refp, &refpp, t));
         if(!upd2_won(fl(p, ADD, ap.gen), &pt(a)->p, &ap))
-            break;
-        if(!gen_eq(pt(a)->n.mgen, n.mgen))
-            break;
-        if((won = updx_won(fl(a, umax(pn.st, RDY), pn.gen + 1),
-                           &pt(p)->n,
-                           &pn)))
-            break;
+            goto done;
     }
-    if(won){
-        casx_won(fl(a, RDY, p.gen + 1), &l->nil.p, &p);
-        casx_won(rup(ap, .st=RDY), &pt(a)->p, &ap);
-    }
+    casx_won(fl(a, RDY, p.gen + 1), &l->nil.p, &p);
+    casx_won(rup(ap, .st=RDY), &pt(a)->p, &ap);
     
+done:    
     flinref_down(refp, t);
     flinref_down(refpp, t);
     return -!won;
