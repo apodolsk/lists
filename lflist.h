@@ -133,19 +133,19 @@ const char *flstatestr(flstate s){
 #define LOG_LFLISTM 0
 #endif
 
-#define mgen_upd_won(g, a, t) trace(LFLISTM, 1, mgen_upd_won, PUN(mgen, g), a, t)
+#define mgen_upd_won(g, a, t) trace(LFLISTM, 2, mgen_upd_won, PUN(mgen, g), a, t)
 
 #define lflist_jam_upd(ng, a, t)                                        \
-    linref_account(0, trace(LFLISTM, 1, lflist_jam_upd, PUN(uptr, ng), a, t))
+    linref_account(0, trace(LFLISTM, 2, lflist_jam_upd, PUN(uptr, ng), a, t))
 
 #define lflist_enq_upd(ng, a, t, l)                                     \
-    linref_account(0, trace(LFLISTM, 1, lflist_enq_upd, PUN(uptr, ng), a, t, l))
+    linref_account(0, trace(LFLISTM, 2, lflist_enq_upd, PUN(uptr, ng), a, t, l))
 
 
-#define lflist_del(as...) linref_account(0, trace(LFLISTM, 1, lflist_del, as))
+#define lflist_del(as...) linref_account(0, trace(LFLISTM, 2, lflist_del, as))
 #define lflist_deq(as...)                       \
     linref_account(flptr(account_expr) ? 1 : 0, trace(LFLISTM, 2, lflist_deq, as))
-#define lflist_enq(as...) linref_account(0, trace(LFLISTM, 1, lflist_enq, as))
-#define lflist_jam(as...) linref_account(0, trace(LFLISTM, 1, lflist_jam, as))
+#define lflist_enq(as...) linref_account(0, trace(LFLISTM, 2, lflist_enq, as))
+#define lflist_jam(as...) linref_account(0, trace(LFLISTM, 2, lflist_jam, as))
 #define lflist_peek(as...) trace(LFLISTM, 2, lflist_peek, as)
 #define lflist_next(as...) trace(LFLISTM, 2, lflist_next, as)
