@@ -224,13 +224,14 @@ err (lflist_del_upd)(flx a, flx *p, mgen ng, type *t){
           refp = {},
           refpp = {};
     flx np,
-        pn = {},
-        n = readx(&pt(a)->n);
+        pn = {};
+    flx n = readx(&pt(a)->n);
+    *p = readx(&pt(a)->p);
+    
+    if(finish_enq(a, p, &n))
+        return -1;
+    
     for(;;){
-        if(help_next(a, &n, &np, &refn, t))
-            goto done;
-        assert(pt(np) == pt(a));
-        
         if(help_prev(a, p, &pn, &refp, &refpp, t)){
             if(p->st != RDY || !gen_eq(p->mgen, a.mgen))
                 goto done;
@@ -239,6 +240,10 @@ err (lflist_del_upd)(flx a, flx *p, mgen ng, type *t){
             break;
         }
         assert(pt(pn) == pt(a) && (pn.st == RDY || pn.st == ABORT));
+        
+        if(help_next(a, &n, &np, &refn, t))
+            goto done;
+        assert(pt(np) == pt(a));
 
         if(!updx_ok(rup(n, .st=COMMIT, .gen++), &pt(a)->n, &n))
             continue;
@@ -254,20 +259,137 @@ done:
     flinref_down(refp, t);
     flinref_down(refpp, t);
 
-    /* if(n.st == ADD) */
-    /*     return -1; */
-
     ppl(1, n, *p, np, pn);
-    while(p->st != ADD && gen_eq(p->mgen, a.mgen)){
-        if(p->st == COMMIT && gen_eq(a.mgen, ng))
-            return -1;
-        flx op = *p;
-        if(updx_won(rup(*p, .nil=0, .pt=0, .st=COMMIT, .mgen = ng), &pt(a)->p, p))
-            return 0;
-        if(op.st == ABORT)
-            return -1;
+    if(!gen_eq(p->mgen, a.mgen))
+        return -1;
+    return -!updx_won(rup(*p, .nil=0, .pt=0, .st=COMMIT, .mgen = ng),
+                      &pt(a)->p,
+                      p);
+}
+
+static
+err (help_next)(flx a, flx *n, flx *np, markp *refn, type *t){
+    for(;;){
+        do if(!pt(*n)) return -1;
+        while(refupd(n, refn, &pt(a)->n, t));
+
+        /* TODO: could be omitted */
+        *np = readx(&pt(*n)->p);
+        for(;;){
+            if(pt(*np) == pt(a))
+                return 0;
+            if(!eqx(&pt(a)->n, n))
+                break;
+            if(n->st == COMMIT || np.nil)
+                return -1;
+            assert(pt(*np) && (np->st == RDY));
+
+            updx_ok(fl(a, np->st, np->gen + n->nil), &pt(*n)->p, np);
+        }
     }
-    return -1;
+}
+
+static
+err (help_prev)(flx a, flx *p, flx *pn, markp *refp, markp *refpp, type *t){
+    for(;;){
+        if(!refp->pt)
+            goto newp;
+        for(;;){
+        readp:
+            if(!eqx(&pt(a)->p, p))
+                break;
+            if(pt(*pn) != pt(a)){
+                if(!a.nil)
+                    return EARG("P abort %:%", a, pn);
+                updx_ok(fl(*pn, RDY, p->gen + 1), &pt(a)->p, p);
+                break;
+            }
+        newpn:
+            if(pn->st < COMMIT)
+                return 0;
+
+        readpp:;
+            flx pp = readx(&pt(*p)->p);
+        newpp:;
+            do if(!pt(pp) || pp.st != RDY)
+                   goto readp;
+            while(refupd(&pp, refpp, &pt(*p)->p, t));
+            
+            flx ppn = readx(&pt(pp)->n);
+            for(;;){
+                if(!eqx(&pt(*p)->p, &pp))
+                    goto newpp;
+                if(pt(ppn) != pt(*p) && pt(ppn) != pt(a))
+                    goto readpp;
+                if(pt(ppn) == pt(a)){
+                    if(!updx_ok(fl(pp, RDY, p->gen + a.nil), &pt(a)->p, p))
+                        goto newp;
+                    swap(refpp, refp);
+                    *pn = ppn;
+                    goto newpn;
+                }
+                if(!updx_ok(fl(a, ppn.st == COMMIT ? ABORT : COMMIT, pn->gen + 1),
+                            &pt(*p)->n, pn))
+                    break;
+                if(pn->st == ABORT)
+                    return 0;
+
+                updx_won(fl(a, ppn.st, ppn.gen + 1), &pt(pp)->n, &ppn);
+            }
+        }
+    newp:;
+        do if(!a.nil && (p->st >= ABORT || !gen_eq(p->mgen, a.mgen)))
+               return EARG("Gen p abort %:%", a, p);
+            else assert(pt(*p));
+        while(refupd(p, refp, &pt(a)->p, t));
+
+        *pn = readx(&pt(*p)->n);
+    }
+}
+
+/* assert p->nil. */
+static
+err abort_enq(flx a, flx *n, flx *p){
+    /* if(p->nil){ */
+    /*     /\* TODO: recheck p *\/ */
+    /*     if(n.st == COMMIT){ */
+    /*         if(updx_won(rup(*n, .pt = 0, .gen++), &pt(a)->n, n)) */
+    /*             return 0; */
+    /*         return -1; */
+    /*     } */
+    /*     /\* TODO: less optimism here *\/ */
+    /*     while(!updx_won(rup(*n, .gen++), &pt(a)->n, n)) */
+    /*         if(n.st == COMMIT) */
+    /*             return -1; */
+
+    /*     flx pn = readx(&pt(*p)->n); */
+    /*     while(pt(pn) != pt(a)){ */
+    /*         if(!eqx(&pt(a)->p, p)) */
+    /*             return -1; */
+    /*         if(updx_won(rup(pn, .gen++), &pt(p)->n, &pn)) */
+    /*             return 0; */
+    /*     } */
+    /* } */
+
+    /* flx np = readx(&pt(*n)->p); */
+    /* if(!eqx(&pt(a)->n, n)) */
+    /*     return 0; */
+    /* if(pt(np)) */
+    
+    
+    
+    /* while(pt(pn) */
+    
+    /* while(n.st == RDY){ */
+    /*     if(!up */
+        
+    /*     flx pn = readx(&pt(p)->n); */
+    /*     if(pt(pn) != pt(a)){ */
+
+    /*     } */
+    /* } */
+    /* if(!p.nil || pt(pn) == pt(a)) */
+    /*     return 0; */
 }
 
 err (lflist_enq)(flx a, type *t, lflist *l){
@@ -292,15 +414,15 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     do{
         nilnp = readx(&pt(niln)->p);
         /* fix up np? */
-        while(!updx_won(fl(niln, RDY, ng), &pt(a)->n, &n))
-            if(!eqx(&pt(a)->p, &p))
-                return -1;
+        while(!updx_won(fl(niln, RDY, n.gen + 1), &pt(a)->n, &n))
+            if(n.st != COMMIT || !pt(n) || !eqx(&pt(a)->p, &p))
+                return 0;
     }while(!updx_won(fl(a, RDY, niln.gen + 1), &pt(nil)->n, &niln));
 
     /* TODO: ref */
     while(!upd_won(fl(a, RDY, nilnp.gen)), &pt(n)->p, &nilnp)
         if(!gen_eq(mpgen, nilnp.mgen))
-            return -1;
+            return 0;
 
     return 0;
 }
@@ -446,90 +568,6 @@ err (help_enq)(flx a, flx *n){
         }
     }
     return 0;
-}
-
-static
-err (help_next)(flx a, flx *n, flx *np, markp *refn, type *t){
-    for(;;){
-        do if(!pt(*n)) return -1;
-        while(refupd(n, refn, &pt(a)->n, t));
-
-        *np = readx(&pt(*n)->p);
-        for(;;){
-            if(pt(*np) == pt(a) && np->st < ABORT){
-                if(np->st == ADD && help_enq(a, n))
-                    break;
-                return 0;
-            }
-            if(!eqx(&pt(a)->n, n))
-                break;
-            if(n->st == ADD || n->st == COMMIT)
-                return -1;
-            assert(pt(*np) && (np->st == RDY || np->st == ADD));
-
-            updx_ok(fl(a, np->st, np->gen + n->nil), &pt(*n)->p, np);
-        }
-    }
-}
-
-static
-err (help_prev)(flx a, flx *p, flx *pn, markp *refp, markp *refpp, type *t){
-    for(;;){
-        if(!refp->pt)
-            goto newp;
-        for(;;){
-        readp:
-            if(!eqx(&pt(a)->p, p))
-                break;
-            if(pt(*pn) != pt(a)){
-                if(!a.nil)
-                    return EARG("P abort %:%", a, pn);
-                updx_ok(fl(*pn, RDY, p->gen + 1), &pt(a)->p, p);
-                break;
-            }
-            if(p->st == ADD && !updx_ok(fl(*p, RDY, a.gen), &pt(a)->p, p))
-                break;
-        newpn:
-            if(pn->st < COMMIT)
-                return 0;
-
-        readpp:;
-            flx pp = readx(&pt(*p)->p);
-        newpp:;
-            do if(!pt(pp) || pp.st != RDY)
-                   goto readp;
-            while(refupd(&pp, refpp, &pt(*p)->p, t));
-            
-            flx ppn = readx(&pt(pp)->n);
-            for(;;){
-                if(!eqx(&pt(*p)->p, &pp))
-                    goto newpp;
-                if(pt(ppn) != pt(*p) && pt(ppn) != pt(a))
-                    goto readpp;
-                if(pt(ppn) == pt(a)){
-                    if(!updx_ok(fl(pp, RDY, p->gen + a.nil), &pt(a)->p, p))
-                        goto newp;
-                    swap(refpp, refp);
-                    *pn = ppn;
-                    goto newpn;
-                }
-                if(!updx_ok(fl(a, ppn.st == COMMIT ? ABORT : COMMIT, pn->gen + 1),
-                            &pt(*p)->n, pn))
-                    break;
-                if(pn->st == ABORT)
-                    return 0;
-
-                updx_won(fl(a, ppn.st, ppn.gen + 1), &pt(pp)->n, &ppn);
-            }
-        }
-    newp:;
-        do if(!a.nil && (p->st >= ABORT || !gen_eq(p->mgen, a.mgen)))
-               return EARG("Gen p abort %:%", a, p);
-            else assert(pt(*p));
-        while(refupd(p, refp, &pt(a)->p, t));
-
-        *pn = readx(&pt(*p)->n);
-    }
 }
 
 constfun
