@@ -14,7 +14,7 @@
 static err help_next(flx a, flx *n, flx *np, markp *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn,
                      markp *refp, markp *refpp, type *t);
-static err lflist_del_upd(flx a, flx *p, mgen ng, type *t);
+static err lflist_del_upd(flx a, flx *p, uptr ng, type *t);
 
 #define pt(flx)                                 \
     ((flanchor *) (uptr)((flx).pt << 2))
@@ -29,17 +29,17 @@ static err lflist_del_upd(flx a, flx *p, mgen ng, type *t);
 
 /* TODO: the only issue with this is a race involving validity bits:
    do_del(a) via seg_new reads a->n.markgen when it's part of a zombie
-   seg, so .rsvd=0. Then a is freed anew and a valid a->n.mgen is
+   seg, so .rsvd=0. Then a is freed anew and a valid a->n.gen is
    read. Wild access results. It'd suffice to add another reserved bit to
    x->markp. */
 /* static */
 /* flx readx(volatile flx *x){ */
 /*     flx r; */
 /*     /\* r.markp = atomic_read(&x->markp); *\/ */
-/*     /\* r.mgen = atomic_read(&x->mgen); *\/ */
+/*     /\* r.gen = atomic_read(&x->gen); *\/ */
 
 /*     r.markp = x->markp; */
-/*     r.mgen = x->mgen; */
+/*     r.gen = x->gen; */
     
 /*     /\* if(r.validity != FLANC_VALID || r.rsvd) *\/ */
 /*     /\*     r = (flx){.st=COMMIT}; *\/ */
@@ -59,7 +59,7 @@ bool eq_upd(volatile flx *a, flx *b){
 }
 
 static
-bool gen_eq(mgen a, mgen ref){
+bool gen_eq(uptr a, uptr ref){
     return eq(a, ref);
 }
 
@@ -115,10 +115,8 @@ bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
 
 #define updx_ok(as...) updx_ok(__func__, __LINE__, as)
 static
-howok (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
-    if((updx_won)(f, l, n, a, e))
-        return WON;
-    return eq2(*e, n) ? OK : NOT;
+bool (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
+    return (updx_won)(f, l, n, a, e);
 }
 
 static
@@ -152,14 +150,14 @@ flat
 err (lflist_del)(flx a, type *t){
     assert(!a.nil);
     flx p = readx(&pt(a)->p);
-    if(p.st == COMMIT || !gen_eq(a.mgen, p.mgen))
+    if(p.st == COMMIT || !gen_eq(a.gen, p.gen))
         return -1;
-    return (lflist_del_upd)(a, &p, a.mgen, t);
+    return (lflist_del_upd)(a, &p, a.gen, t);
 }
 
 #include <pthread.h>
 static flat
-err (lflist_del_upd)(flx a, flx *p, mgen ng, type *t){
+err (lflist_del_upd)(flx a, flx *p, uptr ng, type *t){
     markp refn = {},
           refp = {},
           refpp = {};
@@ -173,7 +171,7 @@ err (lflist_del_upd)(flx a, flx *p, mgen ng, type *t){
         assert(pt(np) == pt(a) && np.st == RDY);
 
         if(help_prev(a, p, &pn, &refp, &refpp, t)){
-            if(p->st != RDY || !gen_eq(p->mgen, a.mgen))
+            if(p->st != RDY || !gen_eq(p->gen, a.gen))
                 goto done;
             if(!eq_upd(&pt(a)->n, &n))
                 continue;
@@ -200,8 +198,8 @@ done:
     flinref_down(refp, t);
     flinref_down(refpp, t);
 
-    while(gen_eq(a.mgen, p->mgen) && p->st != COMMIT)
-        if(updx_won(rup(*p, .nil=0, .pt=0, .st=COMMIT, .mgen = ng),
+    while(gen_eq(a.gen, p->gen) && p->st != COMMIT)
+        if(updx_won(rup(*p, .nil=0, .pt=0, .st=COMMIT, .gen = ng),
                     &pt(a)->p,
                     p))
             return 0;
@@ -280,9 +278,9 @@ err (help_prev)(flx a, flx *p, flx *pn, markp *refp, markp *refpp, type *t){
             }
         }
     newp:;
-        do if(!a.nil && (p->st == COMMIT || !gen_eq(p->mgen, a.mgen)))
+        do if(p->st == COMMIT || !gen_eq(p->gen, a.gen))
                return EARG("Gen p abort %:%", a, p);
-            else assert(pt(*p));
+           else assert(pt(*p));
         while(refupd(p, refp, &pt(a)->p, t));
 
         *pn = readx(&pt(*p)->n);
@@ -342,7 +340,7 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     flx n = readx(&pt(a)->n);
     flx p = readx(&pt(a)->p);
-    if(p.st != COMMIT || !gen_eq(p.mgen, a.mgen))
+    if(p.st != COMMIT || !gen_eq(p.gen, a.gen))
         return -1;
     
     flx nil = {.nil=1,
@@ -400,23 +398,23 @@ flanchor *flptr(flx a){
 }
 
 flx flx_of(flanchor *a){
-    return (flx){.pt = to_pt(a), .mgen=a->p.mgen};
+    return (flx){.pt = to_pt(a), .gen=a->p.gen};
 }
 
 void (flanc_ordered_init)(uptr g, flanchor *a){
     a->n.markp = (markp){.st=COMMIT};
     a->p.markp = (markp){.st=COMMIT};
-    a->n.mgen = (mgen){.gen=g};
-    a->p.mgen = (mgen){.gen=g};
+    a->n.gen = g;
+    a->p.gen = g;
 }
 
 /* TODO */
-bool (mgen_upd_won)(mgen g, flx a, type *t){
+bool (mgen_upd_won)(uptr g, flx a, type *t){
     assert(pt(a)->n.st == COMMIT ||
-           !gen_eq(pt(a)->p.mgen, a.mgen));
-    for(flx p = readx(&pt(a)->p); gen_eq(p.mgen, a.mgen);){
+           !gen_eq(pt(a)->p.gen, a.gen));
+    for(flx p = readx(&pt(a)->p); gen_eq(p.gen, a.gen);){
         assert(p.st == COMMIT);
-        if(raw_casx_won(rup(p, .mgen=g), &pt(a)->p, &p))
+        if(raw_casx_won(rup(p, .gen=g), &pt(a)->p, &p))
             return true;
     }
     return false;

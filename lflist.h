@@ -13,10 +13,6 @@ typedef struct markp{
     uptr pt:WORDBITS-2;
 } markp;
 
-typedef struct mgen{
-    uptr gen: WORDBITS;
-} mgen;
-
 typedef struct flx flx;
 struct flx{
     union {
@@ -34,10 +30,7 @@ struct flx{
            as in LFLIST(). */
         uptr constexp;
     };
-    union{
-        struct mgen;
-        mgen mgen;
-    };
+    uptr gen;
 };
 #define FLX(as...) ((flx){as})
 
@@ -86,7 +79,7 @@ err lflist_del(flx a, type *t);
 err lflist_jam_upd(uptr ng, flx a, type *t);
 err lflist_jam(flx a, type *t);
 
-bool mgen_upd_won(mgen g, flx a, type *t);
+bool mgen_upd_won(uptr g, flx a, type *t);
 
 flx lflist_peek(lflist *l);
 flx lflist_next(flx p, lflist *l);
