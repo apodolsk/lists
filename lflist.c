@@ -8,26 +8,18 @@
 
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
 
-#define RDY FL_RDY
-#define COMMIT FL_COMMIT
+#define RDY 0
+#define COMMIT 1
 
 static err help_next(flx a, flx *n, flx *np, markp *refn, type *t);
 static err help_prev(flx a, flx *p, flx *pn,
                      markp *refp, markp *refpp, type *t);
 static err lflist_del_upd(flx a, flx *p, mgen ng, type *t);
 
-#define help_next(as...) trace(LFLISTM, 3, help_next, as)
-#define help_prev(as...) trace(LFLISTM, 3, help_prev, as)
-#define refupd(as...) trace(LFLISTM, 4, refupd, as)
-#define flinref_down(as...) trace(LFLISTM, 5, flinref_down, as)
-
-#undef LOG_LFLISTM
-#define LOG_LFLISTM 0
-
 #define pt(flx)                                 \
-    ((flanchor *) (uptr)((flx).pt << 4))
+    ((flanchor *) (uptr)((flx).pt << 2))
 
-#define to_pt(flanc) ((uptr) (flanc) >> 4)
+#define to_pt(flanc) ((uptr) (flanc) >> 2)
 
 #define fl(markp, flstate, _gen)                                        \
     ((flx){.nil = (markp).nil,                                          \
@@ -90,7 +82,7 @@ bool (raw_casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* return true; */
     
     if(cas2_won(n, a, e)){
-        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         return true;
     }
     
@@ -104,7 +96,6 @@ bool (casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     assert(aligned_pow2(pt(n), alignof(flanchor)));
     assert(pt(n) || n.st == COMMIT);
     assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
-    assert(!n.rsvd && !e->rsvd);
     
     bool r = (raw_casx_won)(f, l, n, a, e);
 
@@ -128,19 +119,6 @@ howok (updx_ok)(const char *f, int l, flx n, volatile flx *a, flx *e){
     if((updx_won)(f, l, n, a, e))
         return WON;
     return eq2(*e, n) ? OK : NOT;
-}
-
-#define updx_ok_modst(as...) updx_ok_modst(__func__, __LINE__, as)
-static
-howok (updx_ok_modst)(const char *f, int l,
-                      flstate st, flstate nst, flx n, volatile flx *a, flx *e){
-    flx oe = *e;
-    howok k = (updx_ok)(f, l, n, a, e);
-    if(k)
-        return k;
-    if(eq2(*e, rup(oe, .st=st)))
-        return (updx_ok)(f, l, rup(n, .st=nst), a, e);
-    return NOT;
 }
 
 static
@@ -222,7 +200,6 @@ done:
     flinref_down(refp, t);
     flinref_down(refpp, t);
 
-    ppl(0, n, *p, np, pn);
     while(gen_eq(a.mgen, p->mgen) && p->st != COMMIT)
         if(updx_won(rup(*p, .nil=0, .pt=0, .st=COMMIT, .mgen = ng),
                     &pt(a)->p,
@@ -427,8 +404,8 @@ flx flx_of(flanchor *a){
 }
 
 void (flanc_ordered_init)(uptr g, flanchor *a){
-    a->n.markp = (markp){.st=FL_COMMIT};
-    a->p.markp = (markp){.st=FL_COMMIT};
+    a->n.markp = (markp){.st=COMMIT};
+    a->p.markp = (markp){.st=COMMIT};
     a->n.mgen = (mgen){.gen=g};
     a->p.mgen = (mgen){.gen=g};
 }
@@ -461,11 +438,6 @@ bool flanc_valid(flanchor *a){
     flanchor
         *volatile p = pt(px),
         *volatile n = pt(nx);
-
-    /* if(px.validity != FLANC_VALID || */
-    /*    nx.validity != FLANC_VALID || */
-    /*    nx.rsvd || px.rsvd) */
-    /*     goto done; */
 
     if(!p){
         assert(px.st == COMMIT);

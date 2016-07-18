@@ -8,15 +8,9 @@
 
 typedef enum flstate flstate;
 typedef struct markp{
-    uptr rsvd:1;
     uptr nil:1;
-    enum flstate{
-        FL_ADD,
-        FL_RDY,
-        FL_ABORT,
-        FL_COMMIT
-    } st:2;
-    uptr pt:WORDBITS-4;
+    uptr st:1;
+    uptr pt:WORDBITS-2;
 } markp;
 
 typedef struct mgen{
@@ -54,11 +48,11 @@ struct flanchor{
 } align(2 * sizeof(dptr));
 #define FLANCHOR(list){                                                 \
         .n.constexp = (list)                                            \
-                      ? 2 + (FL_RDY << 2) + (uptr) (list)               \
-                      : FL_COMMIT << 2,                                 \
-        .p.constexp = (list) ?                                          \
-                      2 + (FL_RDY << 2) + (uptr) (list)                 \
-                      : FL_COMMIT << 2,                                 \
+                      ? 1 + (uptr) (list)               \
+                      : 2,                                 \
+        .p.constexp = (list)                                           \
+                      ? 1 + (uptr) (list)                 \
+                      : 2,                                 \
     }
 
 
@@ -68,11 +62,11 @@ typedef volatile struct lflist{
 }lflist;
 #define LFLIST(l, elem){                                                \
         {.n = {.constexp = (elem)                                       \
-               ? (FL_RDY << 2) + (uptr) (elem)                          \
-               : 2 + (FL_RDY << 2) + (uptr) (l)},                       \
+               ? (uptr) (elem)                          \
+               : 1 + (uptr) (l)},                       \
          .p = {.constexp = (elem)                                       \
-               ? (FL_RDY << 2) + (uptr) (elem)                          \
-               : 2 + (FL_RDY << 2)  + (uptr) (l)},                      \
+               ? (uptr) (elem)                          \
+               : 1 + (uptr) (l)},                      \
     }}
 
 #endif  /* FAKELOCKFREE */
@@ -109,12 +103,12 @@ bool flanc_valid(flanchor *a);
 #ifndef FAKELOCKFREE
 
 static inline
-const char *flstatestr(flstate s){
-    return (const char *[]){"ADD", "RDY", "ABORT", "COMMIT"}[s];
+const char *flstatestr(bool s){
+    return (const char *[]){"RDY", "COMMIT"}[s];
 }
 
 #define pudef (struct flx,                                              \
-               "{%:%:%, %}", (void *)(uptr)(a->pt << 4), (uptr) a->nil, \
+               "{%:%:%, %}", (void *)(uptr)(a->pt << 2), (uptr) a->nil, \
                flstatestr(a->st), (uptr) a->gen)
 #include <pudef.h>
 #define pudef (struct flanchor, "n:%, p:%", a->n, a->p)
