@@ -41,11 +41,11 @@ struct flanchor{
 } align(2 * sizeof(dptr));
 #define FLANCHOR(list){                                                 \
         .n.constexp = (list)                                            \
-                      ? 1 + (uptr) (list)               \
-                      : 2,                                 \
-        .p.constexp = (list)                                           \
-                      ? 1 + (uptr) (list)                 \
-                      : 2,                                 \
+                      ? 1 + (uptr) (list)                               \
+                      : 2,                                              \
+        .p.constexp = (list)                                            \
+                      ? 1 + (uptr) (list)                               \
+                      : 2,                                              \
     }
 
 
@@ -55,11 +55,11 @@ typedef volatile struct lflist{
 }lflist;
 #define LFLIST(l, elem){                                                \
         {.n = {.constexp = (elem)                                       \
-               ? (uptr) (elem)                          \
-               : 1 + (uptr) (l)},                       \
+               ? (uptr) (elem)                                          \
+               : 1 + (uptr) (l)},                                       \
          .p = {.constexp = (elem)                                       \
-               ? (uptr) (elem)                          \
-               : 1 + (uptr) (l)},                      \
+               ? (uptr) (elem)                                          \
+               : 1 + (uptr) (l)},                                       \
     }}
 
 #endif  /* FAKELOCKFREE */

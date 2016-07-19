@@ -11,10 +11,9 @@
 #define RDY 0
 #define COMMIT 1
 
-static err help_next(flx a, flx *n, flx *np, markp *refn, type *t);
-static err help_prev(flx a, flx *p, flx *pn,
-                     markp *refp, markp *refpp, type *t);
-static err lflist_del_upd(flx a, flx *p, uptr ng, type *t);
+static err help_next(flx a, flx *n, flx *np);
+static err help_prev(flx a, flx *p, flx *pn);
+static err lflist_del_upd(flx a, flx *p, uptr ng);
 
 #define pt(flx)                                 \
     ((flanchor *) (uptr)((flx).pt << 2))
@@ -29,7 +28,11 @@ static err lflist_del_upd(flx a, flx *p, uptr ng, type *t);
 
 static
 flx readx(volatile flx *x){
-    return atomic_read2(x);
+    flx r;
+    r.markp = x->markp;
+    fuzz_atomics();
+    r.gen = x->gen;
+    return r;
 }
 
 static
@@ -39,81 +42,49 @@ bool eq_upd(volatile flx *a, flx *b){
     return eq2(old, *b);
 }
 
-#define raw_casx_won(as...) raw_casx_won(__func__, __LINE__, as)
+#define raw_updx_won(as...) raw_updx_won(__func__, __LINE__, as)
 #include <stdatomic.h>
 static
-bool (raw_casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
+bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* flx r = *a; */
     /* if(eq2(r, *e)){ */
-    /*     *a = r; */
+    /*     *a = n; */
     /*     return true; */
     /* } */
     /* *e = r; */
     /* return false; */
     
-    /* if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){ */
-    /*     log(1, "%:%- % => % p:%", f, l, e, n, (void *) a); */
-    /*     return true; */
-    /* } */
-    /* return true; */
-    
-    if(cas2_won(n, a, e)){
-        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+    if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
+        log(1, "%:%- % => % p:%", f, l, e, n, (void *) a);
         return true;
     }
-    
     return false;
-}
-
-#define casx_won(as...) casx_won(__func__, __LINE__, as)
-static
-bool (casx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
-    assert(!eq2(n, *e));
-    assert(aligned_pow2(pt(n), alignof(flanchor)));
-    assert(pt(n) || n.st == COMMIT);
-    assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
     
-    bool r = (raw_casx_won)(f, l, n, a, e);
-
-    if_dbg(flanc_valid(cof_aligned_pow2(a, flanchor)));
-    return r;
+    /* if(cas2_won(n, a, e)){ */
+    /*     log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n); */
+    /*     *e = n; */
+    /*     return true; */
+    /* } */
+    
+    /* return false; */
 }
 
 #define updx_won(as...) updx_won(__func__, __LINE__, as)
 static
 bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
-    if((casx_won)(f, l, n, a, e)){
+    assert(!eq2(n, *e));
+    assert(aligned_pow2(pt(n), alignof(flanchor)));
+    assert(pt(n) || n.st == COMMIT);
+    assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
+    
+    if((raw_updx_won)(f, l, n, a, e)){
         *e = n;
+        if_dbg(flanc_valid(cof_aligned_pow2(a, flanchor)));
         return true;
     }
+
+    if_dbg(flanc_valid(cof_aligned_pow2(a, flanchor)));
     return false;
-}
-
-static
-void (flinref_down)(markp a, type *t){
-    return;
-    if(!a.pt || a.nil)
-        return;
-    linref_down(pt(a), t);
-}
-
-static
-err (refupd)(flx *a, markp *held, volatile flx *src, type *t){
-    if(!pt(*a))
-        return -1;
-    *held = a->markp;
-    return 0;
-    if(a->pt == held->pt)
-        return 0;
-    flinref_down(*held, t);
-
-    if(a->nil || !linref_up(pt(*a), t)){
-        *held = a->markp;
-        return 0;
-    }
-    if(eq_upd(src, a))
-        *a = (flx){};
-    return -1;
 }
 
 flat
@@ -122,25 +93,22 @@ err (lflist_del)(flx a, type *t){
     flx p = readx(&pt(a)->p);
     if(p.st == COMMIT || a.gen != p.gen)
         return -1;
-    return (lflist_del_upd)(a, &p, a.gen, t);
+    return (lflist_del_upd)(a, &p, a.gen);
 }
 
 #include <pthread.h>
 static flat
-err (lflist_del_upd)(flx a, flx *p, uptr ng, type *t){
-    markp refn = {},
-          refp = {},
-          refpp = {};
+err (lflist_del_upd)(flx a, flx *p, uptr ng){
     flx np,
         pn = {};
     flx n = readx(&pt(a)->n);
     
     for(;;){
-        if(help_next(a, &n, &np, &refn, t))
+        if(help_next(a, &n, &np))
             goto done;
         assert(pt(np) == pt(a) && np.st == RDY);
 
-        if(help_prev(a, p, &pn, &refp, &refpp, t)){
+        if(help_prev(a, p, &pn)){
             if(p->st != RDY || p->gen != a.gen)
                 goto done;
             if(!eq_upd(&pt(a)->n, &n))
@@ -164,10 +132,6 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng, type *t){
     updx_won(fl(*p, np.st, np.gen + n.nil), &pt(n)->p, &np);
 
 done:
-    flinref_down(refn, t);
-    flinref_down(refp, t);
-    flinref_down(refpp, t);
-
     while(a.gen == p->gen && p->st != COMMIT)
         if(updx_won(rup(*p, .nil=0, .pt=0, .st=COMMIT, .gen = ng),
                     &pt(a)->p,
@@ -177,20 +141,17 @@ done:
 }
 
 static
-err (help_next)(flx a, flx *n, flx *np, markp *refn, type *t){
+err (help_next)(flx a, flx *n, flx *np){
     for(;;){
-        do if(!pt(*n)) return -1;
-        while(refupd(n, refn, &pt(a)->n, t));
+        if(!pt(*n))
+            return -1;
 
-        /* TODO: could be omitted */
         *np = readx(&pt(*n)->p);
         for(;;){
             if(pt(*np) == pt(a))
                 return 0;
             if(!eq_upd(&pt(a)->n, n))
                 break;
-            /* TODO */
-            assert(!np->nil);
             if(n->st == COMMIT || np->nil)
                 return EARG("n abort %:%:%", a, n, np);
             assert(pt(*np) && (np->st == RDY));
@@ -201,9 +162,9 @@ err (help_next)(flx a, flx *n, flx *np, markp *refn, type *t){
 }
 
 static
-err (help_prev)(flx a, flx *p, flx *pn, markp *refp, markp *refpp, type *t){
+err (help_prev)(flx a, flx *p, flx *pn){
     for(;;){
-        if(!refp->pt)
+        if(!pt(*pn))
             goto newp;
         for(;;){
         readp:
@@ -219,9 +180,8 @@ err (help_prev)(flx a, flx *p, flx *pn, markp *refp, markp *refpp, type *t){
         readpp:;
             flx pp = readx(&pt(*p)->p);
         newpp:;
-            do if(!pt(pp) || pp.st != RDY)
-                   goto readp;
-            while(refupd(&pp, refpp, &pt(*p)->p, t));
+            if(!pt(pp) || pp.st != RDY)
+                goto readp;
             
             flx ppn = readx(&pt(pp)->n);
             for(;;){
@@ -230,7 +190,6 @@ err (help_prev)(flx a, flx *p, flx *pn, markp *refp, markp *refpp, type *t){
                 if(pt(ppn) == pt(a)){
                     if(!updx_won(fl(pp, RDY, p->gen + a.nil), &pt(a)->p, p))
                         goto newp;
-                    swap(refpp, refp);
                     *pn = ppn;
                     goto newpn;
                 }
@@ -248,10 +207,9 @@ err (help_prev)(flx a, flx *p, flx *pn, markp *refp, markp *refpp, type *t){
             }
         }
     newp:;
-        do if(p->st == COMMIT || p->gen != a.gen)
-               return EARG("Gen p abort %:%", a, p);
-           else assert(pt(*p));
-        while(refupd(p, refp, &pt(a)->p, t));
+        if(p->st == COMMIT || p->gen != a.gen)
+            return EARG("Gen p abort %:%", a, p);
+        assert(pt(*p));
 
         *pn = readx(&pt(*p)->n);
     }
@@ -286,20 +244,6 @@ err abort_enq(flx a, flx *n, flx *p){
     /*     return 0; */
     /* if(pt(np)) */
     
-    
-    
-    /* while(pt(pn) */
-    
-    /* while(n.st == RDY){ */
-    /*     if(!up */
-        
-    /*     flx pn = readx(&pt(p)->n); */
-    /*     if(pt(pn) != pt(a)){ */
-
-    /*     } */
-    /* } */
-    /* if(!p.nil || pt(pn) == pt(a)) */
-    /*     return 0; */
     return 0;
 }
 
@@ -321,8 +265,7 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     flx niln = readx(&pt(nil)->n);
     flx nilnp;
     do{
-        /* TODO: avoidable; ref */
-        muste(help_next(nil, &niln, &nilnp, (markp[]){}, t));
+        muste(help_next(nil, &niln, &nilnp));
         while(!updx_won(fl(niln, RDY, n.gen + 1), &pt(a)->n, &n))
             if(n.st != COMMIT || !pt(n) || !eq_upd(&pt(a)->p, &p))
                 return 0;
@@ -330,7 +273,6 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
 
     upd_won(fl(a, RDY, nilnp.gen), &pt(n)->p, &nilnp);
     
-    /* TODO: ref */
     return 0;
 }
 
@@ -351,13 +293,6 @@ flx (lflist_deq)(type *t, lflist *l){
 }
 
 err (lflist_jam)(flx a, type *t){
-    return lflist_jam_upd(a.gen + 1, a, t);
-}
-
-/* TODO: need to take flinref on p in pn-write case. Not a problem while
-   the only consumer of jam_upd is segalloc, with guaranteed mem validity.  */
-/* TODO: haven't seriously tried to optimize here. */
-err (lflist_jam_upd)(uptr ng, flx a, type *t){
     return 0;
 }
 
@@ -384,7 +319,7 @@ bool (mgen_upd_won)(uptr g, flx a, type *t){
            a.gen != pt(a)->p.gen);
     for(flx p = readx(&pt(a)->p); p.gen == a.gen;){
         assert(p.st == COMMIT);
-        if(raw_casx_won(rup(p, .gen=g), &pt(a)->p, &p))
+        if(raw_updx_won(rup(p, .gen=g), &pt(a)->p, &p))
             return true;
     }
     return false;
