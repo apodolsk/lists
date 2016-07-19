@@ -26,14 +26,20 @@ static err lflist_del_upd(flx a, flx *p, uptr ng);
             .st = (flstate),                                            \
             .gen = (_gen),})
 
-static
-flx readx(volatile flx *x){
-    flx r;
-    r.markp = x->markp;
-    fuzz_atomics();
-    r.gen = x->gen;
-    return r;
-}
+/* flx readx(volatile flx *x){ */
+/*     flx r; */
+/*     r.markp = x->markp; */
+/*     fuzz_atomics(); */
+/*     r.gen = x->gen; */
+/*     return r; */
+/* } */
+#define readx(x)                                \
+    ({                                          \
+        flx r;                                  \
+        r.markp = (x)->markp;                   \
+        r.gen = (x)->gen;                       \
+        r;                                      \
+    })                                          \
 
 static
 bool eq_upd(volatile flx *a, flx *b){
@@ -196,8 +202,8 @@ err (help_prev)(flx a, flx *p, flx *pn){
                 if(pt(ppn) != pt(*p))
                     goto readpp;
                 if(!updx_won(fl(a,
-                               ppn.st == COMMIT ? RDY : COMMIT,
-                               pn->gen + 1),
+                                ppn.st == COMMIT ? RDY : COMMIT,
+                                pn->gen + 1),
                             &pt(*p)->n, pn))
                     break;
                 if(pn->st == RDY)
