@@ -108,7 +108,10 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
     flx np,
         pn = {};
     flx n = readx(&pt(a)->n);
-    
+
+    if(!abort_enq(a, p, &pn, &n))
+        goto done;
+
     for(;;){
         if(help_next(a, &n, &np))
             goto done;
@@ -223,27 +226,40 @@ err (help_prev)(flx a, flx *p, flx *pn){
 
 /* assert p->nil. */
 static
-err abort_enq(flx a, flx *n, flx *p){
-    /* if(p->nil){ */
-    /*     /\* TODO: recheck p *\/ */
-    /*     if(n.st == COMMIT){ */
-    /*         if(updx_won(rup(*n, .pt = 0, .gen++), &pt(a)->n, n)) */
-    /*             return 0; */
-    /*         return -1; */
-    /*     } */
-    /*     /\* TODO: less optimism here *\/ */
-    /*     while(!updx_won(rup(*n, .gen++), &pt(a)->n, n)) */
-    /*         if(n.st == COMMIT) */
-    /*             return -1; */
+err abort_enq(flx a, flx *p, flx *pn, flx *n){
+    if(!p->nil || p->st == COMMIT || p->gen != a.gen)
+        return -1;
 
-    /*     flx pn = readx(&pt(*p)->n); */
-    /*     while(pt(pn) != pt(a)){ */
-    /*         if(!eq_upd(&pt(a)->p, p)) */
-    /*             return -1; */
-    /*         if(updx_won(rup(pn, .gen++), &pt(p)->n, &pn)) */
-    /*             return 0; */
-    /*     } */
-    /* } */
+    *pn = readx(&pt(a)->n);
+    if(pt(*pn) == pt(a))
+        return -1;
+
+    if(n->st == COMMIT)
+        if(updx_won(rup(*n, .pt = 0, .gen++), &pt(a)->n, n))
+            return 0;
+    return -1;
+        
+    
+    if(p->nil){
+        /* TODO: recheck p */
+        if(n.st == COMMIT){
+            if(updx_won(rup(*n, .pt = 0, .gen++), &pt(a)->n, n))
+                return 0;
+            return -1;
+        }
+        /* TODO: less optimism here */
+        while(!updx_won(rup(*n, .gen++), &pt(a)->n, n))
+            if(n.st == COMMIT)
+                return -1;
+
+        flx pn = readx(&pt(*p)->n);
+        while(pt(pn) != pt(a)){
+            if(!eq_upd(&pt(a)->p, p))
+                return -1;
+            if(updx_won(rup(pn, .gen++), &pt(p)->n, &pn))
+                return 0;
+        }
+    }
 
     /* flx np = readx(&pt(*n)->p); */
     /* if(!eq_upd(&pt(a)->n, n)) */
