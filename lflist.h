@@ -13,7 +13,8 @@ typedef struct markp{
         RDY,
         COMMIT,
     }st:1;
-    uptr pt:WORDBITS-2;
+    uptr add:1;
+    uptr pt:WORDBITS-3;
 } markp;
 
 typedef struct flx flx;
