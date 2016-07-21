@@ -8,12 +8,12 @@
 
 typedef enum flstate flstate;
 typedef struct markp{
-    uptr nil:1;
     enum{
         RDY,
         COMMIT,
     }st:1;
     uptr add:1;
+    uptr nil:1;
     uptr pt:WORDBITS-3;
 } markp;
 
@@ -45,11 +45,11 @@ struct flanchor{
 } align(2 * sizeof(dptr));
 #define FLANCHOR(list){                                                 \
         .n.constexp = (list)                                            \
-                      ? 1 + (uptr) (list)                               \
-                      : 2,                                              \
+                      ? 4 + (uptr) (list)                               \
+                      : 1,                                              \
         .p.constexp = (list)                                            \
-                      ? 1 + (uptr) (list)                               \
-                      : 2,                                              \
+                      ? 4 + (uptr) (list)                               \
+                      : 1,                                              \
     }
 
 
@@ -60,10 +60,10 @@ typedef volatile struct lflist{
 #define LFLIST(l, elem){                                                \
         {.n = {.constexp = (elem)                                       \
                ? (uptr) (elem)                                          \
-               : 1 + (uptr) (l)},                                       \
+               : 4 + (uptr) (l)},                                       \
          .p = {.constexp = (elem)                                       \
                ? (uptr) (elem)                                          \
-               : 1 + (uptr) (l)},                                       \
+               : 4 + (uptr) (l)},                                       \
     }}
 
 #endif  /* FAKELOCKFREE */

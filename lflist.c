@@ -64,7 +64,7 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* return false; */
 
     if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
-        /* log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n); */
+        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         *e = n;
         return true;
     }
@@ -126,7 +126,7 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
         }
         assert(pt(pn) == pt(a) && pn.st == RDY);
 
-        if(!updx_won(rup(n, .st=COMMIT, .gen++), &pt(a)->n, &n))
+        if(!updx_won(fl(n, COMMIT, n.gen + 1), &pt(a)->n, &n))
             continue;
 
         if(updx_won(fl(n, pn.st, pn.gen + 1), &pt(*p)->n, &pn))
@@ -137,9 +137,7 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
 
 done:
     while(a.gen == p->gen && p->st != COMMIT)
-        if(updx_won(rup(*p, .nil=0, .pt=0, .st=COMMIT, .gen = ng),
-                    &pt(a)->p,
-                    p))
+        if(updx_won((flx){.st = COMMIT, .gen = ng}, &pt(a)->p, p))
             return 0;
     return -1;
 }
@@ -397,29 +395,32 @@ bool flanc_valid(flanchor *a){
                    np->n.st == COMMIT &&
                    np->p.st == RDY));
         flx pnn = pn->n;
+        flx pnp = pn->p;
         assert((pn == a && pnx.nil)
-               || (pt(pnn) == a && pnn.nil));
+               || (pt(pnn) == a && pnn.nil && pnp.add && pnn.add));
         goto done;
     }
 
-    /* assert(np == a && pn == a */
-    /*        || (nx.st == RDY && pn == a && pt(np->p) == a) */
-    /*        || (nx.st == COMMIT && np == a) */
-    /*        ||  */
-
+    assert(px.st == RDY || !px.add);
+    assert(nx.st == RDY || !nx.add);
+    assert(!nx.add || nx.nil);
     assert(np == a
            || pn != a
            || (pt(np->p) == a &&
                np->n.st == COMMIT &&
                np->p.st == RDY &&
                pn == a &&
-               nx.st == RDY));
+               nx.st == RDY &&
+               !nx.add)
+           || (px.add && nx.add && nx.nil));
     assert(pn == a
            || nx.st == COMMIT
-           || (nx.nil && np != a));
+           || (px.add && nx.add && nx.nil && np != a));
     if(pn == a)
         assert(px.st == RDY);
-
+    if(np == a && px.st != COMMIT)
+        assert(pn == a);
+    
 done:
     /* Sniff out unpaused universe or reordering weirdness. */
     assert(eq2(a->p, px));
