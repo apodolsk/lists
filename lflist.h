@@ -9,7 +9,10 @@
 typedef enum flstate flstate;
 typedef struct markp{
     uptr nil:1;
-    uptr st:1;
+    enum{
+        RDY,
+        COMMIT,
+    }st:1;
     uptr pt:WORDBITS-2;
 } markp;
 
