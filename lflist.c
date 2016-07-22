@@ -6,6 +6,8 @@
 
 #ifndef FAKELOCKFREE
 
+/* #undef E_DBG_LVL */
+/* #define E_DBG_LVL 0 */
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
 
 #define RDY 0
@@ -36,7 +38,14 @@ static err lflist_del_upd(flx a, flx *p, uptr ng);
 /*     r.gen = x->gen; */
 /*     return r; */
 /* } */
-#define readx(x) atomic_read2(x)
+#define readx(x)({                              \
+            flx _r;                             \
+            _r.markp = (x)->markp;              \
+            fuzz_atomics();                     \
+            _r.gen = (x)->gen;                  \
+            _r;                                 \
+        })
+/* #define readx(x) atomic_read2(x) */
 
 static
 bool eq_upd(volatile flx *a, flx *b){
@@ -56,17 +65,17 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* } */
     /* *e = r; */
 
-    /* if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){ */
-    /*     log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n); */
-    /*     *e = n; */
-    /*     return true; */
-    /* } */
-
-    if(cas2_won(n, a, e)){
-        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+    if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
+        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         *e = n;
         return true;
     }
+
+    /* if(cas2_won(n, a, e)){ */
+    /*     log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n); */
+    /*     *e = n; */
+    /*     return true; */
+    /* } */
 
     return false;
 }
@@ -377,7 +386,7 @@ bool flanc_valid(flanchor *a){
         npx = readx(&n->p);
 
 
-    flanchor
+    dbg flanchor
         *volatile pn = pt(pnx),
         *volatile np = pt(npx);
 
@@ -395,8 +404,8 @@ bool flanc_valid(flanchor *a){
                || (pt(np->p) == a &&
                    np->n.st == COMMIT &&
                    np->p.st == RDY));
-        flx pnn = pn->n;
-        flx pnp = pn->p;
+        dbg flx pnn = pn->n;
+        dbg flx pnp = pn->p;
         assert((pn == a && pnx.nil)
                || (pt(pnn) == a && pnn.nil && pnp.add && pnn.add));
         goto done;
@@ -407,7 +416,7 @@ bool flanc_valid(flanchor *a){
     if(nx.st == COMMIT){
         assert(!nx.add);
         flanchor *nn = pt(n->n);
-        if(nn)
+        if(nn && (pn == a))
             assert(pt(nn->p) != a);
     }
     assert(!nx.add || nx.nil);
