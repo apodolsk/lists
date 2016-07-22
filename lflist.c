@@ -40,6 +40,7 @@ static err lflist_del_upd(flx a, flx *p, uptr ng);
     ({                                          \
         flx r;                                  \
         r.markp = (x)->markp;                   \
+        fuzz_atomics();                         \
         r.gen = (x)->gen;                       \
         r;                                      \
     })                                          \
@@ -64,7 +65,7 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* return false; */
 
     if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
-        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         *e = n;
         return true;
     }
@@ -110,8 +111,10 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
 
     for(;;){
         if(help_next(a, &n, &np)){
-            if(n.add)
+            if(n.add){
                 pthread_yield();
+                continue;
+            }
             goto done;
         }
         assert(pt(np) == pt(a) && np.st == RDY);
@@ -228,7 +231,7 @@ err help_enq(flx a, flx *n, flx *np){
     if(!nn.nil || !nn.add)
         return 0;
 
-    flx nnp = pt(*n)->p;
+    flx nnp = pt(nn)->p;
     if(pt(nnp) != pt(a))
         return 0;
     if(!eq_upd(&pt(a)->n, n))
@@ -265,6 +268,7 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     for(;;){
         if(help_prev(nil, &nilp, &nilpn)){
             if(pt(nilpn) != pt(nil)){
+                assert(pt(pt(nilpn)->n) == pt(nil) || !eq2(l->nil.p, nilp));
                 updx_won(fl(nilpn, RDY, nilp.gen + 1), &pt(nil)->p, &nilp);
                 nilpn = (flx){};
             }
@@ -418,7 +422,7 @@ bool flanc_valid(flanchor *a){
            || (px.add && nx.add && nx.nil && np != a));
     if(pn == a)
         assert(px.st == RDY);
-    if(np == a && px.st != COMMIT)
+    if(np == a && px.st != COMMIT && nx.st != COMMIT)
         assert(pn == a);
     
 done:
