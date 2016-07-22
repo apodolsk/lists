@@ -65,7 +65,7 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* return false; */
 
     if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
-        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         *e = n;
         return true;
     }
@@ -268,7 +268,13 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     for(;;){
         if(help_prev(nil, &nilp, &nilpn)){
             if(pt(nilpn) != pt(nil)){
-                assert(pt(pt(nilpn)->n) == pt(nil) || !eq2(l->nil.p, nilp));
+                dbg flanchor *npn = pt(nilpn);
+                assert((pt(npn->n) == pt(nil)
+                        && npn->n.add
+                        && npn->p.add
+                        && pt(npn->p) == pt(nilp))
+                        || !eq2(l->nil.p, nilp));
+                
                 updx_won(fl(nilpn, RDY, nilp.gen + 1), &pt(nil)->p, &nilp);
                 nilpn = (flx){};
             }
@@ -405,8 +411,14 @@ bool flanc_valid(flanchor *a){
         goto done;
     }
 
-    assert(px.st == RDY || !px.add);
-    assert(nx.st == RDY || !nx.add);
+    if(px.st == COMMIT)
+        assert(!px.add);
+    if(nx.st == COMMIT){
+        assert(!nx.add);
+        flanchor *nn = pt(n->n);
+        if(nn)
+            assert(pt(nn->p) != a);
+    }
     assert(!nx.add || nx.nil);
     assert(np == a
            || pn != a

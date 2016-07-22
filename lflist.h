@@ -105,8 +105,8 @@ const char *flstatestr(bool s){
 }
 
 #define pudef (struct flx,                                              \
-               "{%:%:%, %}", (void *)(uptr)(a->pt << 3), (uptr) a->nil, \
-               flstatestr(a->st), (uptr) a->gen)
+               "{%:% %:%, %}", (void *)(uptr)(a->pt << 3), (uptr) a->nil, \
+               flstatestr(a->st), (uptr) a->add, (uptr) a->gen)
 #include <pudef.h>
 #define pudef (struct flanchor, "n:%, p:%", a->n, a->p)
 #include <pudef.h>
