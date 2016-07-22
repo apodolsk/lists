@@ -36,14 +36,7 @@ static err lflist_del_upd(flx a, flx *p, uptr ng);
 /*     r.gen = x->gen; */
 /*     return r; */
 /* } */
-#define readx(x)                                \
-    ({                                          \
-        flx r;                                  \
-        r.markp = (x)->markp;                   \
-        fuzz_atomics();                         \
-        r.gen = (x)->gen;                       \
-        r;                                      \
-    })                                          \
+#define readx(x) atomic_read2(x)
 
 static
 bool eq_upd(volatile flx *a, flx *b){
@@ -62,22 +55,20 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /*     return true; */
     /* } */
     /* *e = r; */
-    /* return false; */
 
-    if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
-        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
-        *e = n;
-        return true;
-    }
-    return false;
-
-    /* if(cas2_won(n, a, e)){ */
-    /*     log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n); */
+    /* if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){ */
+    /*     log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n); */
     /*     *e = n; */
     /*     return true; */
     /* } */
 
-    /* return false; */
+    if(cas2_won(n, a, e)){
+        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        *e = n;
+        return true;
+    }
+
+    return false;
 }
 
 #define updx_won(as...) updx_won(__func__, __LINE__, as)
@@ -293,7 +284,7 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
             break;
     }
 
-    upd_won(fl(a, RDY, nilp.gen + 1), &pt(nil)->p, &nilp);
+    updx_won(fl(a, RDY, nilp.gen + 1), &pt(nil)->p, &nilp);
 
     return 0;
 }
