@@ -38,14 +38,14 @@ static err lflist_del_upd(flx a, flx *p, uptr ng);
 /*     r.gen = x->gen; */
 /*     return r; */
 /* } */
-#define readx(x)({                              \
-            flx _r;                             \
-            _r.markp = (x)->markp;              \
-            fuzz_atomics();                     \
-            _r.gen = (x)->gen;                  \
-            _r;                                 \
-        })
-/* #define readx(x) atomic_read2(x) */
+/* #define readx(x)({                              \ */
+/*             flx _r;                             \ */
+/*             _r.markp = (x)->markp;              \ */
+/*             fuzz_atomics();                     \ */
+/*             _r.gen = (x)->gen;                  \ */
+/*             _r;                                 \ */
+/*         }) */
+#define readx(x) atomic_read2(x)
 
 static
 bool eq_upd(volatile flx *a, flx *b){
@@ -66,7 +66,7 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* *e = r; */
 
     if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
-        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         *e = n;
         return true;
     }
@@ -265,6 +265,7 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     flx nilp = readx(&l->nil.p);
     flx nilpn = {};
 
+    bool won = false;
     for(;;){
         if(help_prev(nil, &nilp, &nilpn)){
             if(pt(nilpn) != pt(nil)){
@@ -282,7 +283,8 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
         }
 
         if(!raw_updx_won(fl(nilp, RDY, ng, .add = 1), &pt(a)->p, &p))
-            return assert(0), -1;
+            return assert(!won), -!won;
+        won = true;
 
         /* TODO: avoid gen updates? */
         while(!updx_won(fl(nil, RDY, n.gen + 1, .add = 1), &pt(a)->n, &n))
@@ -396,7 +398,7 @@ bool flanc_valid(flanchor *a){
     else if(np && pt(np->p) == a)
         nil = np->p.nil;
 
-    assert(n != p || nx.nil || nil);
+    assert(n != p || nx.nil || nil || px.add);
 
     if(nil){
         assert(px.st == RDY && nx.st == RDY);
