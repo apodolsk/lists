@@ -10,9 +10,6 @@
 /* #define E_DBG_LVL 0 */
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
 
-#define RDY 0
-#define COMMIT 1
-
 static err help_next(flx a, flx *n, flx *np);
 static err help_prev(flx a, flx *p, flx *pn);
 static err help_enq(flx a, flx *n, flx *np);
@@ -65,7 +62,7 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* *e = r; */
 
     if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
-        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         *e = n;
         return true;
     }
@@ -112,6 +109,7 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
         if(help_next(a, &n, &np)){
             if(p->st == ADD){
                 pthread_yield();
+                *p = readx(&pt(a)->p);
                 continue;
             }
             goto done;
@@ -119,7 +117,7 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
         assert(pt(np) == pt(a) && np.st != COMMIT);
 
         if(help_prev(a, p, &pn)){
-            if(p->st != RDY || p->gen != a.gen)
+            if(p->st == COMMIT || a.gen != p->gen)
                 goto done;
             if(!eq_upd(&pt(a)->n, &n))
                 continue;
@@ -135,7 +133,7 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
             break;
     }
 
-    updx_won(fl(*p, np.st, np.gen + n.nil), &pt(n)->p, &np);
+    updx_won(fl(*p, RDY, np.gen + n.nil), &pt(n)->p, &np);
 
 done:
     while(a.gen == p->gen && p->st != COMMIT)
@@ -161,7 +159,7 @@ err (help_next)(flx a, flx *n, flx *np){
                 break;
             if(n->st == COMMIT || n->st == ADD)
                 return EARG("n abort %:%:%", a, n, np);
-            assert(pt(*np) && (np->st == RDY || np->st == ABORT));
+            assert(pt(*np) && (np->st != COMMIT));
 
             updx_won(fl(a, RDY, np->gen + n->nil), &pt(*n)->p, np);
         }
@@ -227,8 +225,9 @@ err help_enq(flx a, flx *n, flx *np){
         return 0;
 
     flx nn = readx(&pt(*n)->n);
-    if(!nn.nil || nn.st != ADD)
+    if(nn.st != ADD)
         return 0;
+    assert(nn.nil);
 
     flx nnp = readx(&pt(nn)->p);
     if(pt(nnp) != pt(a))
