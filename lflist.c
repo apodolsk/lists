@@ -28,8 +28,7 @@ static err lflist_del_upd(flx a, flx *p, uptr ng);
     ((flx){.nil = (markp).nil,                                          \
             .pt = (markp).pt,                                           \
             .st = (flstate),                                            \
-            .gen = (_gen),                                              \
-            extra})
+            .gen = (_gen)})
 
 /* flx readx(volatile flx *x){ */
 /*     flx r; */
@@ -111,13 +110,13 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
 
     for(;;){
         if(help_next(a, &n, &np)){
-            if(n.add){
+            if(p->st == ADD){
                 pthread_yield();
                 continue;
             }
             goto done;
         }
-        assert(pt(np) == pt(a) && np.st == RDY);
+        assert(pt(np) == pt(a) && np.st != COMMIT);
 
         if(help_prev(a, p, &pn)){
             if(p->st != RDY || p->gen != a.gen)
@@ -160,11 +159,11 @@ err (help_next)(flx a, flx *n, flx *np){
             }
             if(!eq_upd(&pt(a)->n, n))
                 break;
-            if(n->st == COMMIT || n->add)
+            if(n->st == COMMIT || n->st == ADD)
                 return EARG("n abort %:%:%", a, n, np);
-            assert(pt(*np) && (np->st == RDY));
+            assert(pt(*np) && (np->st == RDY || np->st == ABORT));
 
-            updx_won(fl(a, np->st, np->gen + n->nil), &pt(*n)->p, np);
+            updx_won(fl(a, RDY, np->gen + n->nil), &pt(*n)->p, np);
         }
     }
 }
@@ -208,7 +207,7 @@ err (help_prev)(flx a, flx *p, flx *pn){
                                 pn->gen + 1),
                             &pt(*p)->n, pn))
                     break;
-                if(pn->st == RDY)
+                if(pn->st != COMMIT)
                     return 0;
 
                 updx_won(fl(a, ppn.st, ppn.gen + 1), &pt(pp)->n, &ppn);
@@ -224,14 +223,14 @@ err (help_prev)(flx a, flx *p, flx *pn){
 
 static
 err help_enq(flx a, flx *n, flx *np){
-    if(n->st == COMMIT || !np->add)
+    if(np->st != ADD || n->st != RDY)
         return 0;
 
-    flx nn = pt(*n)->n;
-    if(!nn.nil || !nn.add)
+    flx nn = readx(&pt(*n)->n);
+    if(!nn.nil || nn.st != ADD)
         return 0;
 
-    flx nnp = pt(nn)->p;
+    flx nnp = readx(&pt(nn)->p);
     if(pt(nnp) != pt(a))
         return 0;
     if(!eq_upd(&pt(a)->n, n))
@@ -271,8 +270,8 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
             if(pt(nilpn) != pt(nil)){
                 dbg flanchor *npn = pt(nilpn);
                 assert((pt(npn->n) == pt(nil)
-                        && npn->n.add
-                        && npn->p.add
+                        && npn->n.st == ADD
+                        && npn->p.st == ADD
                         && pt(npn->p) == pt(nilp))
                         || !eq2(l->nil.p, nilp));
                 
@@ -282,14 +281,14 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
             continue;
         }
 
-        if(!raw_updx_won(fl(nilp, RDY, ng, .add = 1), &pt(a)->p, &p))
+        if(!raw_updx_won(fl(nilp, ADD, ng), &pt(a)->p, &p))
             return assert(!won), -!won;
         won = true;
 
         /* TODO: avoid gen updates? */
-        while(!updx_won(fl(nil, RDY, n.gen + 1, .add = 1), &pt(a)->n, &n))
-            if(n.st != COMMIT || !pt(n) || !eq_upd(&pt(a)->p, &p))
-                return 0;
+        while(!updx_won(fl(nil, ADD, n.gen + 1), &pt(a)->n, &n))
+            if(n.st != COMMIT || !eq_upd(&pt(a)->p, &p))
+                return assert(0), 0;
 
         if(updx_won(fl(a, RDY, nilpn.gen + 1), &pt(nilp)->n, &nilpn))
             break;
@@ -398,44 +397,43 @@ bool flanc_valid(flanchor *a){
     else if(np && pt(np->p) == a)
         nil = np->p.nil;
 
-    assert(n != p || nx.nil || nil || px.add);
+    assert(n != p || nx.nil || nil || px.st == ADD);
 
     if(nil){
         assert(px.st == RDY && nx.st == RDY);
         assert((np == a && npx.nil)
                || (pt(np->p) == a &&
                    np->n.st == COMMIT &&
-                   np->p.st == RDY));
+                   np->p.st != COMMIT));
         dbg flx pnn = pn->n;
         dbg flx pnp = pn->p;
         assert((pn == a && pnx.nil)
-               || (pt(pnn) == a && pnn.nil && pnp.add && pnn.add));
+               || (pt(pnn) == a &&
+                   pnn.nil &&
+                   pnp.st == ADD &&
+                   pnn.st == ADD));
         goto done;
     }
 
-    if(px.st == COMMIT)
-        assert(!px.add);
     if(nx.st == COMMIT){
-        assert(!nx.add);
         flanchor *nn = pt(n->n);
         if(nn && (pn == a))
             assert(pt(nn->p) != a);
     }
-    assert(!nx.add || nx.nil);
+    if(nx.st == ADD)
+        assert(nx.nil);
     assert(np == a
            || pn != a
            || (pt(np->p) == a &&
                np->n.st == COMMIT &&
-               np->p.st == RDY &&
-               pn == a &&
-               nx.st == RDY &&
-               !nx.add)
-           || (px.add && nx.add && nx.nil));
+               np->p.st != COMMIT &&
+               nx.st == RDY)
+           || (px.st == ADD && nx.st == ADD && nx.nil));
     assert(pn == a
            || nx.st == COMMIT
-           || (px.add && nx.add && nx.nil && np != a));
+           || (px.st == ADD && nx.st == ADD && nx.nil && np != a));
     if(pn == a)
-        assert(px.st == RDY);
+        assert(px.st != COMMIT);
     if(np == a && px.st != COMMIT && nx.st != COMMIT)
         assert(pn == a);
     
