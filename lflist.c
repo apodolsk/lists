@@ -100,6 +100,17 @@ err (lflist_del)(flx a, type *t){
     return (lflist_del_upd)(a, &p, a.gen);
 }
 
+err (lflist_jam_upd)(uptr ng, flx a, type *t){
+    flx p = readx(&pt(a)->p);
+    if(a.gen != p.gen)
+        return -1;
+    return (lflist_del_upd)(a, &p, ng);
+}
+
+err (lflist_jam)(flx a, type *t){
+    return lflist_jam_upd(a.gen + 1, a, t);
+}
+
 #include <pthread.h>
 static flat
 err (lflist_del_upd)(flx a, flx *p, uptr ng){
@@ -136,9 +147,12 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
     if(!updx_won(fl(*p, RDY, np.gen + n.nil), &pt(n)->p, &np))
         updx_won(fl(*p, RDY, np.gen + n.nil), &pt(n)->p, &np_alt);
 done:
-    while(a.gen == p->gen && p->st != COMMIT)
+    while(a.gen == p->gen){
+        if(ng == a.gen && p->st == COMMIT)
+            return -1;
         if(updx_won((flx){.st = COMMIT, .gen = ng}, &pt(a)->p, p))
             return 0;
+    }
     return -1;
 }
 
@@ -157,12 +171,13 @@ err (help_next)(flx a, flx *n, flx *np){
             }
             if(!eq_upd(&pt(a)->n, n))
                 break;
-            if(n->st == COMMIT || n->st == ADD)
+            if(n->st == COMMIT || (n->st == ADD && pt(a)->p.gen != a.gen))
                 return EARG("n abort %:%:%", a, n, np);
             assert(pt(*np) && (np->st != COMMIT));
 
             updx_won(fl(a, RDY, np->gen + n->nil), &pt(*n)->p, np);
         }
+
     }
 }
 
@@ -326,10 +341,6 @@ flx (lflist_deq)(type *t, lflist *l){
             return fake_linref_up(), r;
         must(!eq_upd(&pt(nil)->p, &p));
     }
-}
-
-err (lflist_jam)(flx a, type *t){
-    return 0;
 }
 
 constfun
