@@ -12,7 +12,9 @@
 
 static err help_next(flx a, flx *n, flx *np);
 static err help_prev(flx a, flx *p, flx *pn);
+
 static err help_enq(flx a, flx *n, flx *np);
+static err abort_enq(flx a, flx *p, flx *pn);
 
 static err lflist_del_upd(flx a, flx *p, uptr ng);
 
@@ -62,7 +64,7 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* *e = r; */
 
     if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
-        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         *e = n;
         return true;
     }
@@ -101,19 +103,16 @@ err (lflist_del)(flx a, type *t){
 #include <pthread.h>
 static flat
 err (lflist_del_upd)(flx a, flx *p, uptr ng){
-    flx np,
-        pn = {};
     flx n = readx(&pt(a)->n);
+    flx np, pn = {};
+    if(!abort_enq(a, p, &pn))
+        goto done;
+    if(p->gen != a.gen)
+        return -1;
 
     for(;;){
-        if(help_next(a, &n, &np)){
-            if(p->st == ADD){
-                pthread_yield();
-                *p = readx(&pt(a)->p);
-                continue;
-            }
+        if(help_next(a, &n, &np))
             goto done;
-        }
         assert(pt(np) == pt(a) && np.st != COMMIT);
 
         if(help_prev(a, p, &pn)){
@@ -133,8 +132,9 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
             break;
     }
 
-    updx_won(fl(*p, RDY, np.gen + n.nil), &pt(n)->p, &np);
-
+    flx np_alt = rup(np, .st = ABORT);
+    if(!updx_won(fl(*p, RDY, np.gen + n.nil), &pt(n)->p, &np))
+        updx_won(fl(*p, RDY, np.gen + n.nil), &pt(n)->p, &np_alt);
 done:
     while(a.gen == p->gen && p->st != COMMIT)
         if(updx_won((flx){.st = COMMIT, .gen = ng}, &pt(a)->p, p))
@@ -175,7 +175,6 @@ err (help_prev)(flx a, flx *p, flx *pn){
         readp:
             if(!eq_upd(&pt(a)->p, p))
                 break;
-            /* TODO */
             if(pt(*pn) != pt(a))
                 return EARG("p abort %:%:%", a, p, pn);
         newpn:
@@ -238,15 +237,30 @@ err help_enq(flx a, flx *n, flx *np){
     return 0;
 }
 
-/* assert p->nil. */
-/* static */
-/* err abort_enq(flx a, flx *p, flx *pn, flx *n){ */
-/*     if(!n->nil) */
-/*         return -1; */
+static
+err abort_enq(flx a, flx *p, flx *_pn){
+    flx *pn = (flx[1]){};
+    do{
+    restart:;
+        if(p->st != ADD || p->gen != a.gen)
+           return -1;
+        *pn = readx(&pt(*p)->n);
+        if(pt(*pn) == pt(a))
+            return -1;
+        /* TODO */
+        *p = readx(&pt(a)->p);
+        pthread_yield();
+        goto restart;
+    }while(!updx_won(rup(*p, .st = ABORT), &pt(a)->p, p));
 
-/*     return -1; */
-/*     return 0; */
-/* } */
+    while(pn->st != COMMIT && pn->nil)
+        if(updx_won(rup(*pn, .gen++), &pt(*p)->n, pn))
+            break;
+        else if(pt(*pn) == pt(a))
+            return -1;
+    
+    return 0;
+}
 
 err (lflist_enq)(flx a, type *t, lflist *l){
     return lflist_enq_upd(a.gen + 1, a, t, l);
@@ -402,15 +416,17 @@ bool flanc_valid(flanchor *a){
         assert(px.st == RDY && nx.st == RDY);
         assert((np == a && npx.nil)
                || (pt(np->p) == a &&
-                   np->n.st == COMMIT &&
-                   np->p.st != COMMIT));
+                   np->p.st != COMMIT &&
+                   pt(np->n) == n &&
+                   np->n.st == COMMIT));
         dbg flx pnn = pn->n;
         dbg flx pnp = pn->p;
         assert((pn == a && pnx.nil)
                || (pt(pnn) == a &&
                    pnn.nil &&
+                   pnn.st == ADD &&
                    pnp.st == ADD &&
-                   pnn.st == ADD));
+                   pt(pnp) == p));
         goto done;
     }
 

@@ -101,7 +101,7 @@ bool flanc_valid(flanchor *a);
 #ifndef FAKELOCKFREE
 
 static inline
-const char *flstatestr(bool s){
+const char *flstatestr(uptr s){
     return (const char *[]){"COMMIT", "RDY", "ADD", "ABORT"}[s];
 }
 
