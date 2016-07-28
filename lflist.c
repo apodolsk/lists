@@ -10,7 +10,7 @@
 /* #define E_DBG_LVL 0 */
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
 
-static err help_next(flx a, flx *n, flx *np);
+static err help_next(flx a, flx *n, flx *np, bool enq_aborted);
 static err help_prev(flx a, flx *p, flx *pn);
 
 static err help_enq(flx a, flx *n, flx *np);
@@ -63,17 +63,17 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* } */
     /* *e = r; */
 
-    if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){
-        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
-        *e = n;
-        return true;
-    }
-
-    /* if(cas2_won(n, a, e)){ */
+    /* if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){ */
     /*     log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n); */
     /*     *e = n; */
     /*     return true; */
     /* } */
+
+    if(cas2_won(n, a, e)){
+        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        *e = n;
+        return true;
+    }
 
     return false;
 }
@@ -116,13 +116,12 @@ static flat
 err (lflist_del_upd)(flx a, flx *p, uptr ng){
     flx n = readx(&pt(a)->n);
     flx np, pn = {};
-    if(!abort_enq(a, p, &pn))
-        goto done;
+    bool aborted = !abort_enq(a, p, &pn);
     if(p->gen != a.gen)
         return -1;
 
     for(;;){
-        if(help_next(a, &n, &np))
+        if(help_next(a, &n, &np, aborted))
             goto done;
         assert(pt(np) == pt(a) && np.st != COMMIT);
 
@@ -157,7 +156,7 @@ done:
 }
 
 static
-err (help_next)(flx a, flx *n, flx *np){
+err (help_next)(flx a, flx *n, flx *np, bool enq_aborted){
     for(;;){
         if(!pt(*n))
             return -1;
@@ -171,7 +170,7 @@ err (help_next)(flx a, flx *n, flx *np){
             }
             if(!eq_upd(&pt(a)->n, n))
                 break;
-            if(n->st == COMMIT || (n->st == ADD && pt(a)->p.gen != a.gen))
+            if(n->st == COMMIT || (n->st == ADD && (enq_aborted || pt(a)->p.gen != a.gen)))
                 return EARG("n abort %:%:%", a, n, np);
             assert(pt(*np) && (np->st != COMMIT));
 
@@ -253,27 +252,30 @@ err help_enq(flx a, flx *n, flx *np){
 }
 
 static
-err abort_enq(flx a, flx *p, flx *_pn){
-    flx *pn = (flx[1]){};
+err abort_enq(flx a, flx *p, flx *pn){
     do{
-    restart:;
         if(p->st != ADD || p->gen != a.gen)
-           return -1;
+           return *pn = (flx){}, -1;
         *pn = readx(&pt(*p)->n);
         if(pt(*pn) == pt(a))
             return -1;
-        /* TODO */
-        *p = readx(&pt(a)->p);
-        pthread_yield();
-        goto restart;
     }while(!updx_won(rup(*p, .st = ABORT), &pt(a)->p, p));
 
-    while(pn->st != COMMIT && pn->nil)
-        if(updx_won(rup(*pn, .gen++), &pt(*p)->n, pn))
-            break;
-        else if(pt(*pn) == pt(a))
-            return -1;
-    
+    *pn = readx(&pt(*p)->n);
+    if(!eq_upd(&pt(a)->p, p)){
+        return *pn = (flx){},
+               -1;
+    }
+
+    if(pt(*pn) == pt(a))
+        return -1;
+    if(pn->st == COMMIT || !pn->nil)
+        return 0;
+    if(updx_won(rup(*pn, .gen++), &pt(*p)->n, pn))
+        return 0;
+
+    if(pt(*pn) == pt(a))
+        return -1;
     return 0;
 }
 
@@ -310,13 +312,13 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
         }
 
         if(!raw_updx_won(fl(nilp, ADD, ng), &pt(a)->p, &p))
-            return assert(!won), -!won;
-        won = true;
+            return -!won;
 
         /* TODO: avoid gen updates? */
-        while(!updx_won(fl(nil, ADD, n.gen + 1), &pt(a)->n, &n))
+        while(!won && !updx_won(fl(nil, ADD, n.gen + 1), &pt(a)->n, &n))
             if(n.st != COMMIT || !eq_upd(&pt(a)->p, &p))
-                return assert(0), 0;
+                return 0;
+        won = true;
 
         if(updx_won(fl(a, RDY, nilpn.gen + 1), &pt(nilp)->n, &nilpn))
             break;
@@ -391,7 +393,7 @@ bool flanc_valid(flanchor *a){
 
     if(!p){
         assert(px.st == COMMIT);
-        assert(nx.st == COMMIT);
+        assert(nx.st == COMMIT || nx.st == ADD);
         if(n)
             assert(pt(n->p) != a);
 
@@ -457,6 +459,7 @@ bool flanc_valid(flanchor *a){
            || (px.st == ADD && nx.st == ADD && nx.nil));
     assert(pn == a
            || nx.st == COMMIT
+           || (px.st == COMMIT && nx.st == ADD)
            || (px.st == ADD && nx.st == ADD && nx.nil && np != a));
     if(pn == a)
         assert(px.st != COMMIT);
