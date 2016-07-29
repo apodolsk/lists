@@ -5,9 +5,6 @@
 #include <nalloc.h>
 
 #ifndef FAKELOCKFREE
-
-/* #undef E_DBG_LVL */
-/* #define E_DBG_LVL 0 */
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
 
 static err help_next(flx a, flx *n, flx *np, bool enq_aborted);
@@ -301,7 +298,7 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
                 dbg flanchor *npn = pt(nilpn);
                 assert((pt(npn->n) == pt(nil)
                         && npn->n.st == ADD
-                        && npn->p.st == ADD
+                        && (npn->p.st == ADD || npn->p.st == ABORT)
                         && pt(npn->p) == pt(nilp))
                         || !eq2(l->nil.p, nilp));
                 
@@ -438,7 +435,7 @@ bool flanc_valid(flanchor *a){
                || (pt(pnn) == a &&
                    pnn.nil &&
                    pnn.st == ADD &&
-                   pnp.st == ADD &&
+                   (pnp.st == ADD || pnp.st == ABORT) &&
                    pt(pnp) == p));
         goto done;
     }
@@ -456,11 +453,11 @@ bool flanc_valid(flanchor *a){
                np->n.st == COMMIT &&
                np->p.st != COMMIT &&
                nx.st == RDY)
-           || (px.st == ADD && nx.st == ADD && nx.nil));
+           || ((px.st == ADD || px.st == ABORT) && nx.st == ADD && nx.nil));
     assert(pn == a
            || nx.st == COMMIT
            || (px.st == COMMIT && nx.st == ADD)
-           || (px.st == ADD && nx.st == ADD && nx.nil && np != a));
+           || ((px.st == ADD || px.st == ABORT) && nx.st == ADD && nx.nil && np != a));
     if(pn == a)
         assert(px.st != COMMIT);
     if(np == a && px.st != COMMIT && nx.st != COMMIT)
