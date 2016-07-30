@@ -67,7 +67,7 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* } */
 
     if(cas2_won(n, a, e)){
-        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         *e = n;
         return true;
     }
@@ -114,8 +114,8 @@ err (lflist_del_upd)(flx a, flx *p, uptr ng){
     flx n = readx(&pt(a)->n);
     flx np, pn = {};
     bool aborted = !abort_enq(a, p, &pn);
-    if(p->gen != a.gen)
-        return -1;
+    if(p->gen != a.gen || p->st == COMMIT)
+        goto done;
 
     for(;;){
         if(help_next(a, &n, &np, aborted))
