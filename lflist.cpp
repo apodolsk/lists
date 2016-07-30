@@ -6,9 +6,8 @@ struct type;
 
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
 
-extern void fuzz_atomics(void);
-extern void fake_linref_up(void);
-extern bool randpcnt(uptr u);
+struct lflist;
+struct flanchor;
 
 enum flst{
     COMMIT,
@@ -16,9 +15,6 @@ enum flst{
     ADD,
     ABORT,
 };
-
-struct lflist;
-struct flanchor;
 
 struct flx{
     flst st:2;
@@ -54,23 +50,27 @@ struct lflist{
     flanchor nil;
 };
 
-#define log(...)
-#define ppl(...)
-#define RUP_PFX(fld,_, __) __rup_copy fld
-#define rup(orig, changes...)({                 \
-            auto __rup_copy = orig;             \
-            MAP(RUP_PFX,, changes);             \
-            __rup_copy;                         \
-        })                                      \
 
-err lflist_enq_upd(uptr ng, flx a, type *t, lflist *l);
-err lflist_enq(flx a, type *t, lflist *l);
+extern "C"{
+    extern void fuzz_atomics(void);
+    extern void fake_linref_up(void);
+    extern bool randpcnt(uptr u);
+    extern err pause_universe();
+    extern void resume_universe(void);
 
-flx lflist_deq(type *t, lflist *l);
 
-err lflist_del(flx a, type *t);
-err lflist_jam_upd(uptr ng, flx a, type *t);
-err lflist_jam(flx a, type *t);
+    err lflist_enq_upd(uptr ng, flx a, type *t, lflist *l);
+    err lflist_enq(flx a, type *t, lflist *l);
+
+    flx lflist_deq(type *t, lflist *l);
+
+    err lflist_del(flx a, type *t);
+    err lflist_jam_upd(uptr ng, flx a, type *t);
+    err lflist_jam(flx a, type *t);
+    flx flx_of(flanchor *a);
+    volatile flanchor *flptr(flx a);
+    bool flanc_valid(flanchor *a);
+}
 
 static err help_next(flx a, flx& n, flx& np, bool enq_aborted);
 static err help_prev(flx a, flx& p, flx& pn);
@@ -131,12 +131,11 @@ flanchor* flx::operator->(){
 /*     r.read[1] = ((volatile flx_read *)x)->read[1]; */
 /*     return r.x; */
 /* } */
-typedef aliasing uptr uptr_aliasing;
 flx readx(volatile flx *x){
     union flx_read{
         flx x;
         uptr read[2];
-    };
+    } aliasing;
 
     flx_read r;
     r.read[0] = ((volatile flx_read *)x)->read[0];
@@ -153,6 +152,7 @@ flx readx(volatile flx *x){
 /*         }) */
 /* #define readx(x) atomic_read2(x) */
 
+#undef eq2
 #include <cstring>
 bool eq2(flx a, flx b){
     return !memcmp(&a, &b, sizeof(a));
@@ -199,13 +199,13 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx& e){
 #define updx_won(as...) updx_won(__func__, __LINE__, as)
 static
 bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx& e){
-    assert(!eq2(n, *e));
-    assert(aligned_pow2(pt(n), alignof(flanchor)));
+    assert(!eq2(n, e));
+    /* assert(aligned_pow2(pt(n), alignof(flanchor))); */
     assert(pt(n) || n.st == COMMIT);
-    assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor));
+    /* assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor)); */
 
     bool w = (raw_updx_won)(f, l, n, a, e);
-    if_dbg(flanc_valid(cof_aligned_pow2(a, flanchor)));
+    assert((flanc_valid(cof_aligned_pow2(a, flanchor)), 1));
     return w;
 }
 
@@ -225,6 +225,9 @@ err (lflist_jam_upd)(uptr ng, flx a, type *t){
     return (lflist_del_upd)(a, p, ng);
 }
 
+err lflist_jam(flx a, type *t){
+    return lflist_jam_upd(a.gen + 1, a, t);
+}
 #include <pthread.h>
 static flat
 err (lflist_del_upd)(flx a, flx& p, uptr ng){
@@ -288,7 +291,7 @@ err (help_next)(flx a, flx& n, flx& np, bool enq_aborted){
                 break;
             if(n.st == COMMIT || (n.st == ADD && (enq_aborted || a->p.gen != a.gen)))
                 return EARG("n abort %:%:%", a, n, np);
-            assert(*np && (np->st != COMMIT));
+            assert(np && (np.st != COMMIT));
 
             updx_won(flx(a, RDY, np.gen + n.nil), &n->p, np);
         }
@@ -421,11 +424,10 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     for(;;){
         if(help_prev(nil, nilp, nilpn)){
             if(nilpn != nil){
-                dbg volatile flanchor *npn = nilpn;
-                assert((npn->n == nil
-                        && npn->n.st == ADD
-                        && (npn->p.st == ADD || npn->p.st == ABORT)
-                        && npn->p == nilp)
+                assert((nilpn->n == nil
+                        && nilpn->n.st == ADD
+                        && (nilpn->p.st == ADD || nilpn->p.st == ABORT)
+                        && nilpn->p == nilpn)
                         || !eq2(l->nil.p, nilp));
                 
                 updx_won(flx(nilpn, RDY, nilp.gen + 1), &nil->p, nilp);

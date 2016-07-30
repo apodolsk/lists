@@ -6,38 +6,26 @@
 
 #include <nalloc.h>
 
-typedef enum flstate flstate;
-typedef struct markp{
-    enum{
-        COMMIT,
-        RDY,
-        ADD,
-        ABORT,
-    }st:2;
-    uptr nil:1;
-    uptr pt:WORDBITS-3;
-} markp;
+enum flst{
+    COMMIT,
+    RDY,
+    ADD,
+    ABORT,
+};
 
-typedef struct flx flx;
 struct flx{
-    union {
-        struct markp;
-        markp markp;
-        
-        /* It's implementation-defined in C11 (6.6) whether you can cast
-           addresses in constant expressions. GCC/CLANG do as an
-           undocumented extension, but no computation from a cast may be
-           truncated (as it would be if writing .pt). There's a mailing
-           list post
-           (http://lists.cs.uiuc.edu/pipermail/cfe-dev/2013-May/029450.html)
-           attributing this to relocation troubles. Nevertheless, you can
-           use arithmetic on an untruncated cast to get the same effect,
-           as in LFLIST(). */
+    union{
+        struct{
+            enum flst st:2;
+            uptr nil:1;
+            uptr pt:WORDBITS-3;
+        };
         uptr constexp;
     };
+    
     uptr gen;
 };
-#define FLX(as...) ((flx){as})
+typedef struct flx flx;
 
 typedef volatile struct flanchor flanchor;
 struct flanchor{
@@ -52,7 +40,6 @@ struct flanchor{
                       ? 5 + (uptr) (list)                               \
                       : 0,                                              \
     }
-
 
 
 typedef volatile struct lflist{
