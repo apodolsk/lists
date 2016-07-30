@@ -67,7 +67,7 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx *e){
     /* } */
 
     if(cas2_won(n, a, e)){
-        log(0, "%:%- %(% => %)", f, l, (void *) a, *e, n);
+        log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n);
         *e = n;
         return true;
     }
@@ -231,7 +231,8 @@ err (help_prev)(flx a, flx *p, flx *pn){
 
 static
 err help_enq(flx a, flx *n, flx *np){
-    if(np->st != ADD || n->st != RDY)
+    if((np->st != ADD && np->st != ABORT)
+       || n->st != RDY)
         return 0;
 
     flx nn = readx(&pt(*n)->n);
@@ -250,30 +251,37 @@ err help_enq(flx a, flx *n, flx *np){
 
 static
 err abort_enq(flx a, flx *p, flx *pn){
-    do{
-        if(p->st != ADD || p->gen != a.gen)
-           return *pn = (flx){}, -1;
-        *pn = readx(&pt(*p)->n);
-        if(pt(*pn) == pt(a))
+    bool read_pn_after_abort = false;
+    for(;;){
+        if(p->st == COMMIT || p->gen != a.gen)
             return -1;
-    }while(!updx_won(rup(*p, .st = ABORT), &pt(a)->p, p));
+        *pn = readx(&pt(*p)->n);
+        if(p->st == RDY)
+            return -1;
+        for(;;){
+            if(pt(*pn) == pt(a))
+                return -1;
+            if(read_pn_after_abort)
+                return 0;
+            if(p->st == ADD){
+                if(!updx_won(rup(*p, .st = ABORT), &pt(a)->p, p))
+                    break;
+            }else{
+                if(!eq_upd(&pt(a)->p, p))
+                    break;
+                read_pn_after_abort = true;
+            }
 
-    *pn = readx(&pt(*p)->n);
-    if(!eq_upd(&pt(a)->p, p)){
-        return *pn = (flx){},
-               -1;
+            if(!pn->nil || pn->st == COMMIT){
+                if(read_pn_after_abort)
+                    return 0;
+                break;
+            }
+
+            if(updx_won(rup(*pn, .gen++), &pt(*p)->n, pn))
+                return 0;
+        }
     }
-
-    if(pt(*pn) == pt(a))
-        return -1;
-    if(pn->st == COMMIT || !pn->nil)
-        return 0;
-    if(updx_won(rup(*pn, .gen++), &pt(*p)->n, pn))
-        return 0;
-
-    if(pt(*pn) == pt(a))
-        return -1;
-    return 0;
 }
 
 err (lflist_enq)(flx a, type *t, lflist *l){
@@ -420,7 +428,7 @@ bool flanc_valid(flanchor *a){
     else if(np && pt(np->p) == a)
         nil = np->p.nil;
 
-    assert(n != p || nx.nil || nil || px.st == ADD);
+    assert(n != p || nx.nil || nil || (px.st == ADD || px.st == ABORT));
 
     if(nil){
         assert(px.st == RDY && nx.st == RDY);
@@ -449,15 +457,20 @@ bool flanc_valid(flanchor *a){
         assert(nx.nil);
     assert(np == a
            || pn != a
+           || ((px.st == ADD || px.st == ABORT) &&
+               nx.st == ADD &&
+               nx.nil)
            || (pt(np->p) == a &&
                np->n.st == COMMIT &&
                np->p.st != COMMIT &&
-               nx.st == RDY)
-           || ((px.st == ADD || px.st == ABORT) && nx.st == ADD && nx.nil));
+               nx.st == RDY));
     assert(pn == a
            || nx.st == COMMIT
            || (px.st == COMMIT && nx.st == ADD)
-           || ((px.st == ADD || px.st == ABORT) && nx.st == ADD && nx.nil && np != a));
+           || ((px.st == ADD || px.st == ABORT) &&
+               nx.st == ADD &&
+               nx.nil &&
+               np != a));
     if(pn == a)
         assert(px.st != COMMIT);
     if(np == a && px.st != COMMIT && nx.st != COMMIT)
