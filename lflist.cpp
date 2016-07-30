@@ -1,7 +1,5 @@
 #ifndef FAKELOCKFREE
 
-#include <cxx_dialect.hpp>
-
 struct type;
 
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
@@ -52,13 +50,8 @@ struct lflist{
 
 
 extern "C"{
-    extern void fuzz_atomics(void);
     extern void fake_linref_up(void);
-    extern bool randpcnt(uptr u);
-    extern err pause_universe();
-    extern void resume_universe(void);
-
-
+    
     err lflist_enq_upd(uptr ng, flx a, type *t, lflist *l);
     err lflist_enq(flx a, type *t, lflist *l);
 
