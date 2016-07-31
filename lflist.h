@@ -1,5 +1,10 @@
 #pragma once
 
+typedef struct{
+    volatile struct flanchor *ptr;
+    uptr gen;
+}flref;
+
 #ifdef FAKELOCKFREE
 #include <fakelflist.h>
 #else
@@ -54,27 +59,49 @@ typedef volatile struct lflist{
                : 5 + (uptr) (l)},                                       \
     }}
 
+/* static inline constfun */
+/* flanchor *flptr(flx a){ */
+/*     assert(!a.nil); */
+/*     return (flanchor *)(uptr)(a.pt << 3); */
+/* } */
+
+/* static inline */
+/* flx flx_of(flanchor *a){ */
+/*     return (flx){.pt = ((uptr) a) >> 3, .gen = a->p.gen}; */
+/* } */
+
+static inline constfun
+flanchor *flptr(flref a){
+    return a.ptr;
+}
+
+static inline
+flref flref_of(flanchor *a){
+    return (flref){.ptr = a, .gen = a->p.gen};
+}
+
 #endif  /* FAKELOCKFREE */
+
+
+flanchor *flptr(flref a);
+flref flref_of(flanchor *a);
 
 /* TODO: replace flx_of() with flarg() to pass the complete value of
    a->p to enq/deq/etc and omit the redundant a->p read there. */
-flx flx_of(flanchor *a);
-constfun
-flanchor *flptr(flx a);
 
-err lflist_enq_upd(uptr ng, flx a, type *t, lflist *l);
-err lflist_enq(flx a, type *t, lflist *l);
+err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
+err lflist_enq(flref a, type *t, lflist *l);
 
-flx lflist_deq(type *t, lflist *l);
+flref lflist_deq(type *t, lflist *l);
 
-err lflist_del(flx a, type *t);
-err lflist_jam_upd(uptr ng, flx a, type *t);
-err lflist_jam(flx a, type *t);
+err lflist_del(flref a, type *t);
+err lflist_jam_upd(uptr ng, flref a, type *t);
+err lflist_jam(flref a, type *t);
 
-bool mgen_upd_won(uptr g, flx a, type *t);
+bool mgen_upd_won(uptr g, flref a, type *t);
 
-flx lflist_peek(lflist *l);
-flx lflist_next(flx p, lflist *l);
+flref lflist_peek(lflist *l);
+flref lflist_next(flref p, lflist *l);
 
 bool flanchor_unused(flanchor *a);
 

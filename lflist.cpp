@@ -14,6 +14,23 @@ enum flst{
     ABORT,
 };
 
+struct flref{
+    volatile flanchor *ptr;
+    uptr gen;
+
+    flref(volatile flanchor *a);
+    flref() = default;
+    
+    volatile flanchor* operator->(){
+        return ptr;
+    }
+
+    operator volatile flanchor*() volatile{
+        return ptr;
+    }
+};
+
+
 struct flx{
     flst st:2;
     uptr nil:1;
@@ -31,6 +48,8 @@ struct flx{
 
     explicit flx(volatile lflist *l);
     explicit flx(volatile flanchor *a);
+    flx(flref r);
+    
     flx(volatile const flx& a){
         union flx_read{
             flx x;
@@ -44,6 +63,14 @@ struct flx{
         *this = r.x;
     }
     flx(const flx& a) = default;
+
+    flx &operator =(const flx& a) = default;
+    void operator =(const volatile flx& a){
+        *this = flx(a);
+    };
+
+
+
     /* flx& operator =(const flx &) = default; */
     /* constexpr flx(flx&& a) = default; */
     
@@ -65,20 +92,17 @@ struct lflist{
     flanchor nil;
 };
 
-
 extern "C"{
     extern void fake_linref_up(void);
     
-    err lflist_enq_upd(uptr ng, flx a, type *t, lflist *l);
-    err lflist_enq(flx a, type *t, lflist *l);
+    err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
+    err lflist_enq(flref a, type *t, lflist *l);
 
-    flx lflist_deq(type *t, lflist *l);
+    flref lflist_deq(type *t, lflist *l);
 
-    err lflist_del(flx a, type *t);
-    err lflist_jam_upd(uptr ng, flx a, type *t);
-    err lflist_jam(flx a, type *t);
-    flx flx_of(volatile flanchor *a);
-    volatile flanchor *flptr(flx a);
+    err lflist_del(flref a, type *t);
+    err lflist_jam_upd(uptr ng, flref a, type *t);
+    err lflist_jam(flref a, type *t);
     bool flanc_valid(volatile flanchor *a);
 }
 
@@ -88,9 +112,13 @@ static err help_prev(flx a, flx& p, flx& pn);
 static err help_enq(flx a, flx& n, flx& np);
 static err abort_enq(flx a, flx& p, flx& pn);
 
-static err lflist_del_upd(flx a, flx& p, uptr ng);
+static err lflist_del_upd(flref a, flx& p, uptr ng);
 
 #define to_pt(flanc) (((uptr) (flanc)) >> 3)
+
+flref::flref(volatile flanchor *a):
+    ptr(a),
+    gen(a->p.gen){}
 
 flx::flx(volatile lflist *l):
     st(),
@@ -104,6 +132,13 @@ flx::flx(volatile flanchor *a):
     nil(),
     pt(to_pt(a)),
     gen(a->p.gen)
+{}
+
+flx::flx(flref r):
+    st(),
+    nil(),
+    pt(to_pt(r.ptr)),
+    gen(r.gen)
 {}
 
 /* flx::flx(flanchor *a): */
@@ -163,20 +198,37 @@ volatile flanchor* flx::operator->(){
 /*     return r.x; */
 /* } */
 
-flx readx(volatile flx *x){
-    /* return *x; */
-    union flx_read{
-        flx x;
-        uptr read[2];
-    } aliasing;
+/* flx readx(volatile flx *x){ */
+/*     /\* return *x; *\/ */
+/*     union flx_read{ */
+/*         flx x; */
+/*         uptr read[2]; */
+/*     } aliasing; */
 
-    flx_read r;
-    r.read[0] = ((volatile flx_read *)x)->read[0];
-    fuzz_atomics();
-    r.read[1] = ((volatile flx_read *)x)->read[1];
-    return r.x;
-    /* return *x; */
-}
+/*     flx_read r; */
+/*     r.read[0] = ((volatile flx_read *)x)->read[0]; */
+/*     fuzz_atomics(); */
+/*     r.read[1] = ((volatile flx_read *)x)->read[1]; */
+/*     return r.x; */
+/*     /\* return *x; *\/ */
+/* } */
+
+#define readx(x) (*(x))
+
+/* flx readx(volatile flx *x){ */
+/*     /\* return *x; *\/ */
+/*     union flx_read{ */
+/*         flx x; */
+/*         uptr read[2]; */
+/*     } aliasing; */
+
+/*     flx_read r; */
+/*     r.read[0] = ((volatile flx_read *)x)->read[0]; */
+/*     fuzz_atomics(); */
+/*     r.read[1] = ((volatile flx_read *)x)->read[1]; */
+/*     return r.x; */
+/*     /\* return *x; *\/ */
+/* } */
 
 /* flx readx(volatile flx *x){ */
 /*     typedef volatile aliasing uptr auptr; */
@@ -245,13 +297,14 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx* a, flx& e){
     /*     *e = n; */
     /*     return true; */
     /* } */
+    (void) a;
     if(__atomic_compare_exchange(a, &e, &n, false,
                                  __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){
-        printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n",
-               get_dbg_id(),
-               f, l, a,
-               (volatile flanchor *) e, e.nil, flstatestr(e.st), e.gen,
-               (volatile flanchor *) n, n.nil, flstatestr(n.st), n.gen);
+        /* printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
+        /*        get_dbg_id(), */
+        /*        f, l, a, */
+        /*        (volatile flanchor *) e, e.nil, flstatestr(e.st), e.gen, */
+        /*        (volatile flanchor *) n, n.nil, flstatestr(n.st), n.gen); */
         e = n;
         return true;
     }
@@ -290,27 +343,26 @@ bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx& e){
 }
 
 flat
-err (lflist_del)(flx a, type *t){
-    assert(!a.nil);
+err (lflist_del)(flref a, type *t){
     flx p = readx(&a->p);
     if(p.st == COMMIT || a.gen != p.gen)
         return -1;
     return (lflist_del_upd)(a, p, a.gen);
 }
 
-err (lflist_jam_upd)(uptr ng, flx a, type *t){
+err (lflist_jam_upd)(uptr ng, flref a, type *t){
     flx p = readx(&a->p);
     if(a.gen != p.gen)
         return -1;
     return (lflist_del_upd)(a, p, ng);
 }
 
-err lflist_jam(flx a, type *t){
+err lflist_jam(flref a, type *t){
     return lflist_jam_upd(a.gen + 1, a, t);
 }
 #include <pthread.h>
 static flat
-err (lflist_del_upd)(flx a, flx& p, uptr ng){
+err (lflist_del_upd)(flref a, flx& p, uptr ng){
     flx n = readx(&a->n);
     flx np, pn = {};
     assert(!pn.pt);
@@ -487,11 +539,11 @@ err abort_enq(flx a, flx& p, flx& pn){
     }
 }
 
-err (lflist_enq)(flx a, type *t, lflist *l){
+err (lflist_enq)(flref a, type *t, lflist *l){
     return lflist_enq_upd(a.gen + 1, a, t, l);
 }
 
-err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
+err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
     flx p = readx(&a->p);
     if(p.st != COMMIT || p.gen != a.gen)
         return -1;
@@ -535,30 +587,20 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     return 0;
 }
 
-flx (lflist_deq)(type *t, lflist *l){
+flref (lflist_deq)(type *t, lflist *l){
     flx nil(l);
     flx p = readx(&nil->p);
     for(;;){
         /* TODO: flinref */
         if(p.nil)
-            return (flx){};
-        flx r((volatile flanchor *) p);
+            return (flref){};
+        flref r(p);
         if(!eq_upd(&nil->p, p))
             continue;
         if(!lflist_del(r, t))
             return fake_linref_up(), r;
         must(!eq_upd(&nil->p, p));
     }
-}
-
-constfun
-volatile flanchor *flptr(flx a){
-    assert(!a.nil);
-    return a;
-}
-
-flx flx_of(volatile flanchor *a){
-    return flx(a);
 }
 
 bool (flanchor_unused)(volatile flanchor *a){
@@ -653,7 +695,7 @@ bool flanc_valid(volatile flanchor *a){
     }    
 done:
     /* Sniff out unpaused universe or reordering weirdness. */
-    assert(eq2(a->p, p));
+    assert(eq2(readx(&a->p), p));
     assert(eq2(readx(&a->n), n));
 
     resume_universe();

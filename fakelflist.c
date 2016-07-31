@@ -18,12 +18,12 @@ void unlock_lflist(lflist *l){
     pthread_mutex_unlock((pthread_mutex_t *) &l->mut);
 }
 
-flx flx_of(flanchor *a){
-    return (flx){a, a->gen};
+flref flref_of(flanchor *a){
+    return (flref){a, a->gen};
 }
 
-flanchor *flptr(flx a){
-    return a.a;
+flanchor *flptr(flref a){
+    return a.ptr;
 }
 
 /* TODO: lock_lflist may segfault in segalloc. As with lflist, need
@@ -32,19 +32,19 @@ err (lflist_del)(flx a, type *t){
     (void) t;
     lflist *l;
     while(1){
-        l = a.a->host;
-        if(!l || a.a->gen != a.gen)
+        l = a.ptr->host;
+        if(!l || a.ptr->gen != a.gen)
             return -1;
         lock_lflist(l);
-        if(a.a->host == l)
+        if(a.ptr->host == l)
             break;
         unlock_lflist(l);
     }
-    if(a.a->gen != a.gen)
+    if(a.ptr->gen != a.gen)
         return unlock_lflist(l), -1;
-    list_del(&a.a->lanc, &l->l);
-    assert(a.a->host == l);
-    a.a->host = NULL;
+    list_del(&a.ptr->lanc, &l->l);
+    assert(a.ptr->host == l);
+    a.ptr->host = NULL;
     unlock_lflist(l);
     return 0;
 }
@@ -69,14 +69,14 @@ err (lflist_enq)(flx a, type *t, lflist *l){
 
 err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
     (void) t;
-    if(a.a->gen != a.gen)
+    if(a.ptr->gen != a.gen)
         return -1;
     lock_lflist(l);
-    if(!cas2_won(((stx){ng, l}), &a.a->stx, (&(stx){a.gen, NULL})))
+    if(!cas2_won(((stx){ng, l}), &a.ptr->stx, (&(stx){a.gen, NULL})))
         return unlock_lflist(l), -1;
-    list_enq(&a.a->lanc, &l->l);
-    assert(a.a->host == l);
-    assert(a.a->gen == ng);
+    list_enq(&a.ptr->lanc, &l->l);
+    assert(a.ptr->host == l);
+    assert(a.ptr->gen == ng);
     unlock_lflist(l);
     return 0;
 }
@@ -86,15 +86,15 @@ err (lflist_jam)(flx a, type *t){
 }
 
 err (lflist_jam_upd)(uptr ng, flx a, type *t){
-    for(stx ax = a.a->stx;;){
+    for(stx ax = a.ptr->stx;;){
         if(ax.gen != a.gen)
             return -1;
         if(ax.host){
             lflist_del(a, t);
-            ax = a.a->stx;
+            ax = a.ptr->stx;
             continue;
         }
-        if(cas2_won(((stx){ng, NULL}), &a.a->stx, &ax))
+        if(cas2_won(((stx){ng, NULL}), &a.ptr->stx, &ax))
             return 0;
     }
 }
