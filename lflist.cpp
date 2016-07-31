@@ -1,5 +1,7 @@
 #ifndef FAKELOCKFREE
 
+using namespace std;
+
 struct type;
 
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
@@ -8,20 +10,35 @@ struct lflist;
 struct flanchor;
 
 struct flref{
-    volatile flanchor *ptr;
+    flanchor *ptr;
     uptr gen;
 
-    flref(volatile flanchor *a);
+    flref(flanchor *a);
     flref() = default;
     
-    volatile flanchor* operator->(){
+    flanchor* operator->() const{
         return ptr;
     }
 
-    operator volatile flanchor*() volatile{
+    operator flanchor*() const{
         return ptr;
     }
 };
+
+extern "C"{
+    extern void fake_linref_up(void);
+    
+    err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
+    err lflist_enq(flref a, type *t, lflist *l);
+
+    flref lflist_deq(type *t, lflist *l);
+
+    err lflist_del(flref a, type *t);
+    err lflist_jam_upd(uptr ng, flref a, type *t);
+    err lflist_jam(flref a, type *t);
+    bool flanc_valid(flanchor *a);
+}
+
 
 enum flst{
     COMMIT,
@@ -45,11 +62,10 @@ struct flx{
         gen(gen)
         {};
 
-    explicit flx(volatile lflist *l);
-    explicit flx(volatile flanchor *a);
+    explicit flx(lflist *l);
     flx(flref r);
     
-    flx(volatile const flx& a){
+    flx(atomic<flx>& a){
          union flx_read{
             flx x;
             uptr read[2];
@@ -61,44 +77,26 @@ struct flx{
         r.read[1] = ((volatile flx_read *)&a)->read[1];
         *this = r.x;
     }
-    flx(const flx& a) = default;
-
-    void operator =(const volatile flx& a){
+    void operator =(atomic<flx>& a){
         *this = flx(a);
     };
-    flx &operator =(const flx& a) = default;
 
-    operator volatile flanchor*() volatile const{
+    operator flanchor*() const{
         return (flanchor *)(uptr)(pt << 3);
     }
-
-    volatile flanchor* operator->() volatile const{
+    flanchor* operator->() const{
         return *this;
     }
 };
 
 struct flanchor{
-    flx n;
-    flx p;
+    atomic<flx> n;
+    atomic<flx> p;
 } align(2 * sizeof(dptr));
 
 struct lflist{
     flanchor nil;
 };
-
-extern "C"{
-    extern void fake_linref_up(void);
-    
-    err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
-    err lflist_enq(flref a, type *t, lflist *l);
-
-    flref lflist_deq(type *t, lflist *l);
-
-    err lflist_del(flref a, type *t);
-    err lflist_jam_upd(uptr ng, flref a, type *t);
-    err lflist_jam(flref a, type *t);
-    bool flanc_valid(volatile flanchor *a);
-}
 
 static err help_next(flx a, flx& n, flx& np, bool enq_aborted);
 static err help_prev(flx a, flx& p, flx& pn);
@@ -110,22 +108,15 @@ static err lflist_del_upd(flref a, flx& p, uptr ng);
 
 #define to_pt(flanc) (((uptr) (flanc)) >> 3)
 
-flref::flref(volatile flanchor *a):
+flref::flref(flanchor *a):
     ptr(a),
-    gen(a->p.gen){}
+    gen(flx(a->p).gen){}
 
-flx::flx(volatile lflist *l):
+flx::flx(lflist *l):
     st(),
     nil(1),
     pt(to_pt(&l->nil)),
     gen()
-{}
-
-flx::flx(volatile flanchor *a):
-    st(),
-    nil(),
-    pt(to_pt(a)),
-    gen(a->p.gen)
 {}
 
 flx::flx(flref r):
@@ -141,7 +132,7 @@ bool eq2(flx a, flx b){
     return !memcmp(&a, &b, sizeof(a));
 }
 static
-bool eq_upd(volatile flx *a, flx& b){
+bool eq_upd(volatile atomic<flx> *a, flx& b){
     flx old = b;
     b = *a;
     return eq2(b, old);
@@ -154,24 +145,10 @@ const char *flstatestr(uptr s){
 #define raw_updx_won(as...) raw_updx_won(__func__, __LINE__, as)
 
 static
-bool (raw_updx_won)(const char *f, int l, flx n, volatile flx* a, flx& e){
+bool (raw_updx_won)(const char *f, int l, flx n, volatile atomic<flx>* a, flx& e){
     fuzz_atomics();
     
-    /* flx r = *a; */
-    /* if(eq2(r, *e)){ */
-    /*     *a = n; */
-    /*     return true; */
-    /* } */
-    /* *e = r; */
-
-    /* if(atomic_compare_exchange_strong((_Atomic volatile flx *) a, e, n)){ */
-    /*     log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n); */
-    /*     *e = n; */
-    /*     return true; */
-    /* } */
-    (void) a;
-    if(__atomic_compare_exchange(a, &e, &n, false,
-                                 __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){
+    if(a->compare_exchange_strong(e, n)){
         /* printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
         /*        get_dbg_id(), */
         /*        f, l, a, */
@@ -180,30 +157,12 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx* a, flx& e){
         e = n;
         return true;
     }
-
-    /* using namespace std; */
-    /* if(atomic_compare_exchange_strong((std::atomic<flx> *) a, &e, n)){ */
-    /*     printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
-    /*            get_dbg_id(), */
-    /*            f, l, a, */
-    /*            (volatile flanchor *) e, e.nil, flstatestr(e.st), e.gen, */
-    /*            (volatile flanchor *) n, n.nil, flstatestr(n.st), n.gen); */
-    /*     e = n; */
-    /*     return true; */
-    /* } */
-
-    /* if(cas2_won(n, a, e)){ */
-    /*     log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n); */
-    /*     *e = n; */
-    /*     return true; */
-    /* } */
-
     return false;
 }
 
 #define updx_won(as...) updx_won(__func__, __LINE__, as)
 static
-bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx& e){
+bool (updx_won)(const char *f, int l, flx n, volatile atomic<flx> *a, flx& e){
     assert(!eq2(n, e));
     /* assert(aligned_pow2(pt(n), alignof(flanchor))); */
     assert(n || n.st == COMMIT);
@@ -293,7 +252,8 @@ err (help_next)(flx a, flx& n, flx& np, bool enq_aborted){
             }
             if(!eq_upd(&a->n, n))
                 break;
-            if(n.st == COMMIT || (n.st == ADD && (enq_aborted || a->p.gen != a.gen)))
+            if(n.st == COMMIT || (n.st == ADD && (enq_aborted ||
+                                                  flx(a->p).gen != a.gen)))
                 return EARG("n abort %:%:%", a, n, np);
             assert(np && (np.st != COMMIT));
 
@@ -474,102 +434,103 @@ flref (lflist_deq)(type *t, lflist *l){
     }
 }
 
-bool (flanchor_unused)(volatile flanchor *a){
-    return a->p.st == COMMIT;
+bool (flanchor_unused)(flanchor *a){
+    return flx(a->p).st == COMMIT;
 }
 
 /* TODO: printf isn't reentrant. Watch CPU usage for deadlock upon assert
    print failure.  */
-bool flanc_valid(volatile flanchor *a){
-    if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
-        return false;
+bool flanc_valid(flanchor *a){
+/*     if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe()) */
+/*         return false; */
 
-    dbg flx
-        p = a->p,
-        n = a->n;
+/*     dbg flx */
+/*         p = a->p, */
+/*         n = a->n; */
 
-    if(!p){
-        assert(p.st == COMMIT);
-        assert(n.st == COMMIT || n.st == ADD);
-        if(n)
-            assert(n->p != a);
+/*     if(!p){ */
+/*         assert(p.st == COMMIT); */
+/*         assert(n.st == COMMIT || n.st == ADD); */
+/*         if(n) */
+/*             assert(n->p != a); */
 
-        goto done;
-    }
+/*         goto done; */
+/*     } */
 
-    if(!n){
-        assert(n.st == COMMIT);
-        if(p)
-            assert(p->n != a);
-        goto done;
-    }
-    {
+/*     if(!n){ */
+/*         assert(n.st == COMMIT); */
+/*         if(p) */
+/*             assert(p->n != a); */
+/*         goto done; */
+/*     } */
+/*     { */
 
-    dbg flx
-        pn = p->n,
-        pp = p->p,
-        np = n->p,
-        nn = n->n;
+/*     dbg flx */
+/*         pn = p->n, */
+/*         pp = p->p, */
+/*         np = n->p, */
+/*         nn = n->n; */
 
-    bool nil = false;
-    if(np == a)
-        nil = np.nil;
-    else if(np && np->p == a)
-        nil = np->p.nil;
+/*     bool nil = false; */
+/*     if(np == a) */
+/*         nil = np.nil; */
+/*     else if(np && np->p == a) */
+/*         nil = np->p.nil; */
 
-    assert(n != p || n.nil || nil || (p.st == ADD || p.st == ABORT));
+/*     assert(n != p || n.nil || nil || (p.st == ADD || p.st == ABORT)); */
 
-    if(nil){
-        assert(p.st == RDY && n.st == RDY);
-        assert((np == a && np.nil)
-               || (np->p == a &&
-                   np->p.st != COMMIT &&
-                   np->n == n &&
-                   np->n.st == COMMIT));
-        dbg flx pnn = pn->n;
-        dbg flx pnp = pn->p;
-        assert((pn == a && pn.nil)
-               || (pnn == a &&
-                   pnn.nil &&
-                   pnn.st == ADD &&
-                   (pnp.st == ADD || pnp.st == ABORT) &&
-                   pnp == p));
-        goto done;
-    }
+/*     if(nil){ */
+/*         assert(p.st == RDY && n.st == RDY); */
+/*         assert((np == a && np.nil) */
+/*                || (np->p == a && */
+/*                    np->p.st != COMMIT && */
+/*                    np->n == n && */
+/*                    np->n.st == COMMIT)); */
+/*         dbg flx pnn = pn->n; */
+/*         dbg flx pnp = pn->p; */
+/*         assert((pn == a && pn.nil) */
+/*                || (pnn == a && */
+/*                    pnn.nil && */
+/*                    pnn.st == ADD && */
+/*                    (pnp.st == ADD || pnp.st == ABORT) && */
+/*                    pnp == p)); */
+/*         goto done; */
+/*     } */
 
-    if(n.st == COMMIT){
-        if(nn && (pn == a))
-            assert(nn->p != a);
-    }
-    if(n.st == ADD)
-        assert(n.nil);
-    assert(np == a
-           || pn != a
-           || ((p.st == ADD || p.st == ABORT) &&
-               n.st == ADD &&
-               n.nil)
-           || (np->p == a &&
-               np->n.st == COMMIT &&
-               np->p.st != COMMIT &&
-               n.st == RDY));
-    assert(pn == a
-           || n.st == COMMIT
-           || (p.st == COMMIT && n.st == ADD)
-           || ((p.st == ADD || p.st == ABORT) &&
-               n.st == ADD &&
-               n.nil &&
-               np != a));
-    if(pn == a)
-        assert(p.st != COMMIT);
-    if(np == a && p.st != COMMIT && n.st != COMMIT)
-        assert(pn == a);
-    }    
-done:
-    /* Sniff out unpaused universe or reordering weirdness. */
-    assert(eq2(a->p, p));
-    assert(eq2(a->n, n));
+/*     if(n.st == COMMIT){ */
+/*         if(nn && (pn == a)) */
+/*             assert(nn->p != a); */
+/*     } */
+/*     if(n.st == ADD) */
+/*         assert(n.nil); */
+/*     assert(np == a */
+/*            || pn != a */
+/*            || ((p.st == ADD || p.st == ABORT) && */
+/*                n.st == ADD && */
+/*                n.nil) */
+/*            || (np->p == a && */
+/*                np->n.st == COMMIT && */
+/*                np->p.st != COMMIT && */
+/*                n.st == RDY)); */
+/*     assert(pn == a */
+/*            || n.st == COMMIT */
+/*            || (p.st == COMMIT && n.st == ADD) */
+/*            || ((p.st == ADD || p.st == ABORT) && */
+/*                n.st == ADD && */
+/*                n.nil && */
+/*                np != a)); */
+/*     if(pn == a) */
+/*         assert(p.st != COMMIT); */
+/*     if(np == a && p.st != COMMIT && n.st != COMMIT) */
+/*         assert(pn == a); */
+/*     }     */
+/* done: */
+/*     /\* Sniff out unpaused universe or reordering weirdness. *\/ */
+/*     assert(eq2(a->p, p)); */
+/*     assert(eq2(a->n, n)); */
 
-    resume_universe();
+/*     resume_universe(); */
+/*     return true; */
     return true;
 }
 
