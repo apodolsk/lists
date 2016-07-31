@@ -89,7 +89,7 @@ flx::flx(volatile flanchor *a):
     gen(a->p.gen)
 {}
 
-#define pt(x) ((flanchor *)(uptr)((x).pt << 3))
+/* #define pt(x) ((flanchor *)(uptr)((x).pt << 3)) */
 
 /* flanchor& flx::operator*(){ */
 /*     return *(flanchor *)(uptr)(pt << 3); */
@@ -179,7 +179,8 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx& e){
     fuzz_atomics();
     if(__atomic_compare_exchange(a, &e, &n, false,
                                  __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){
-        printf("%s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n",
+        printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n",
+               get_dbg_id(),
                f, l, a,
                (volatile flanchor *) e, e.nil, flstatestr(e.st), e.gen,
                (volatile flanchor *) n, n.nil, flstatestr(n.st), n.gen);
@@ -201,7 +202,7 @@ static
 bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx& e){
     assert(!eq2(n, e));
     /* assert(aligned_pow2(pt(n), alignof(flanchor))); */
-    assert(pt(n) || n.st == COMMIT);
+    assert(n || n.st == COMMIT);
     /* assert(n.nil || pt(n) != cof_aligned_pow2(a, flanchor)); */
 
     bool w = (raw_updx_won)(f, l, n, a, e);
@@ -233,6 +234,7 @@ static flat
 err (lflist_del_upd)(flx a, flx& p, uptr ng){
     flx n = readx(&a->n);
     flx np, pn = {};
+    assert(!pn.pt);
     bool aborted = !abort_enq(a, p, pn);
     if(p.gen != a.gen || p.st == COMMIT)
         goto done;
@@ -427,7 +429,7 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
                 assert((nilpn->n == nil
                         && nilpn->n.st == ADD
                         && (nilpn->p.st == ADD || nilpn->p.st == ABORT)
-                        && nilpn->p == nilpn)
+                        && nilpn->p == nilp)
                         || !eq2(l->nil.p, nilp));
                 
                 updx_won(flx(nilpn, RDY, nilp.gen + 1), &nil->p, nilp);
