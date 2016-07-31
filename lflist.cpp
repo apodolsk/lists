@@ -31,6 +31,21 @@ struct flx{
 
     explicit flx(volatile lflist *l);
     explicit flx(volatile flanchor *a);
+    flx(volatile const flx& a){
+        union flx_read{
+            flx x;
+            uptr read[2];
+        } aliasing;
+
+        flx_read r;
+        r.read[0] = ((volatile flx_read *)&a)->read[0];
+        fuzz_atomics();
+        r.read[1] = ((volatile flx_read *)&a)->read[1];
+        *this = r.x;
+    }
+    flx(const flx& a) = default;
+    /* flx& operator =(const flx &) = default; */
+    /* constexpr flx(flx&& a) = default; */
     
 
     operator volatile flanchor*() volatile;
@@ -39,8 +54,7 @@ struct flx{
     volatile flanchor* operator->();
 };
 
-
-CASSERT(std::is_trivially_copyable<flx>::value);
+/* CASSERT(std::is_trivially_copyable<flx>::value); */
 
 struct flanchor{
     flx n;
@@ -76,7 +90,7 @@ static err abort_enq(flx a, flx& p, flx& pn);
 
 static err lflist_del_upd(flx a, flx& p, uptr ng);
 
-#define to_pt(flanc) ((uptr) (flanc) >> 3)
+#define to_pt(flanc) (((uptr) (flanc)) >> 3)
 
 flx::flx(volatile lflist *l):
     st(),
@@ -231,19 +245,8 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx* a, flx& e){
     /*     *e = n; */
     /*     return true; */
     /* } */
-    /* if(__atomic_compare_exchange(a, &e, &n, false, */
-    /*                              __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){ */
-    /*     printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
-    /*            get_dbg_id(), */
-    /*            f, l, a, */
-    /*            (volatile flanchor *) e, e.nil, flstatestr(e.st), e.gen, */
-    /*            (volatile flanchor *) n, n.nil, flstatestr(n.st), n.gen); */
-    /*     e = n; */
-    /*     return true; */
-    /* } */
-
-    using namespace std;
-    if(atomic_compare_exchange_strong((std::atomic<flx> *) a, &e, n)){
+    if(__atomic_compare_exchange(a, &e, &n, false,
+                                 __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){
         printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n",
                get_dbg_id(),
                f, l, a,
@@ -252,6 +255,17 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx* a, flx& e){
         e = n;
         return true;
     }
+
+    /* using namespace std; */
+    /* if(atomic_compare_exchange_strong((std::atomic<flx> *) a, &e, n)){ */
+    /*     printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
+    /*            get_dbg_id(), */
+    /*            f, l, a, */
+    /*            (volatile flanchor *) e, e.nil, flstatestr(e.st), e.gen, */
+    /*            (volatile flanchor *) n, n.nil, flstatestr(n.st), n.gen); */
+    /*     e = n; */
+    /*     return true; */
+    /* } */
 
     /* if(cas2_won(n, a, e)){ */
     /*     log(1, "%:%- %(% => %)", f, l, (void *) a, *e, n); */
@@ -639,7 +653,7 @@ bool flanc_valid(volatile flanchor *a){
     }    
 done:
     /* Sniff out unpaused universe or reordering weirdness. */
-    assert(eq2(readx(&a->p), p));
+    assert(eq2(a->p, p));
     assert(eq2(readx(&a->n), n));
 
     resume_universe();
