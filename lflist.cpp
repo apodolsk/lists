@@ -157,6 +157,10 @@ bool eq_upd(volatile flx *a, flx& b){
     return eq2(b, old);
 }
 
+static inline
+const char *flstatestr(uptr s){
+    return (const char *[]){"COMMIT", "RDY", "ADD", "ABORT"}[s];
+}
 #define raw_updx_won(as...) raw_updx_won(__func__, __LINE__, as)
 static
 bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx& e){
@@ -172,10 +176,13 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx& e){
     /*     *e = n; */
     /*     return true; */
     /* } */
-    (void) a;
+    fuzz_atomics();
     if(__atomic_compare_exchange(a, &e, &n, false,
                                  __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){
-        log(1, "%:%- %(% => %)", f, l, (void *) a, e, n);
+        printf("%s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n",
+               f, l, a,
+               (volatile flanchor *) e, e.nil, flstatestr(e.st), e.gen,
+               (volatile flanchor *) n, n.nil, flstatestr(n.st), n.gen);
         e = n;
         return true;
     }
@@ -454,7 +461,7 @@ flx (lflist_deq)(type *t, lflist *l){
         /* TODO: flinref */
         if(p.nil)
             return (flx){};
-        flx r(p);
+        flx r((volatile flanchor *) p);
         if(!eq_upd(&nil->p, p))
             continue;
         if(!lflist_del(r, t))
