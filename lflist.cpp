@@ -7,13 +7,6 @@ struct type;
 struct lflist;
 struct flanchor;
 
-enum flst{
-    COMMIT,
-    RDY,
-    ADD,
-    ABORT,
-};
-
 struct flref{
     volatile flanchor *ptr;
     uptr gen;
@@ -30,6 +23,12 @@ struct flref{
     }
 };
 
+enum flst{
+    COMMIT,
+    RDY,
+    ADD,
+    ABORT,
+};
 
 struct flx{
     flst st:2;
@@ -51,7 +50,7 @@ struct flx{
     flx(flref r);
     
     flx(volatile const flx& a){
-        union flx_read{
+         union flx_read{
             flx x;
             uptr read[2];
         } aliasing;
@@ -64,24 +63,19 @@ struct flx{
     }
     flx(const flx& a) = default;
 
-    flx &operator =(const flx& a) = default;
     void operator =(const volatile flx& a){
         *this = flx(a);
     };
+    flx &operator =(const flx& a) = default;
 
+    operator volatile flanchor*() volatile const{
+        return (flanchor *)(uptr)(pt << 3);
+    }
 
-
-    /* flx& operator =(const flx &) = default; */
-    /* constexpr flx(flx&& a) = default; */
-    
-
-    operator volatile flanchor*() volatile;
-    
-    /* flanchor& operator*(); */
-    volatile flanchor* operator->();
+    volatile flanchor* operator->() volatile const{
+        return *this;
+    }
 };
-
-/* CASSERT(std::is_trivially_copyable<flx>::value); */
 
 struct flanchor{
     flx n;
@@ -141,128 +135,6 @@ flx::flx(flref r):
     gen(r.gen)
 {}
 
-/* flx::flx(flanchor *a): */
-/*     st(), */
-/*     nil(), */
-/*     pt(to_pt(a)), */
-/*     gen(a->p.gen) */
-/* {} */
-
-/* void flx::operator =(const volatile flx& x){ */
-/*     union flx_read{ */
-/*         flx x; */
-/*         uptr read[2]; */
-/*     } aliasing; */
-
-/*     flx_read r; */
-/*     r.read[0] = ((volatile flx_read *)&x)->read[0]; */
-/*     fuzz_atomics(); */
-/*     r.read[1] = ((volatile flx_read *)&x)->read[1]; */
-/*     *this = r.x; */
-/* } */
-
-
-/* #define pt(x) ((flanchor *)(uptr)((x).pt << 3)) */
-
-/* flanchor& flx::operator*(){ */
-/*     return *(flanchor *)(uptr)(pt << 3); */
-/* } */
-
-flx::operator volatile flanchor*() volatile{
-    return (flanchor *)(uptr)(pt << 3);
-}
-
-volatile flanchor* flx::operator->(){
-    return (flanchor *)(uptr)(pt << 3);
-}
-
-/* bool flx::operator==(const flx &x){ */
-/*     return pt == x.pt; */
-/* } */
-
-/* bool flx::operator!=(const flx &x){ */
-/*     return pt != x.pt; */
-/* } */
-
-
-/* flx(volatile flx *x){ */
-/*     union flx_read{ */
-/*         flx x; */
-/*         uptr read[2]; */
-/*     }; */
-
-/*     flx_read r; */
-/*     r.read[0] = ((volatile flx_read *)x)->read[0]; */
-/*     fuzz_atomics(); */
-/*     r.read[1] = ((volatile flx_read *)x)->read[1]; */
-/*     return r.x; */
-/* } */
-
-/* flx readx(volatile flx *x){ */
-/*     /\* return *x; *\/ */
-/*     union flx_read{ */
-/*         flx x; */
-/*         uptr read[2]; */
-/*     } aliasing; */
-
-/*     flx_read r; */
-/*     r.read[0] = ((volatile flx_read *)x)->read[0]; */
-/*     fuzz_atomics(); */
-/*     r.read[1] = ((volatile flx_read *)x)->read[1]; */
-/*     return r.x; */
-/*     /\* return *x; *\/ */
-/* } */
-
-#define readx(x) (*(x))
-
-/* flx readx(volatile flx *x){ */
-/*     /\* return *x; *\/ */
-/*     union flx_read{ */
-/*         flx x; */
-/*         uptr read[2]; */
-/*     } aliasing; */
-
-/*     flx_read r; */
-/*     r.read[0] = ((volatile flx_read *)x)->read[0]; */
-/*     fuzz_atomics(); */
-/*     r.read[1] = ((volatile flx_read *)x)->read[1]; */
-/*     return r.x; */
-/*     /\* return *x; *\/ */
-/* } */
-
-/* flx readx(volatile flx *x){ */
-/*     typedef volatile aliasing uptr auptr; */
-/*     /\* return *x; *\/ */
-/*     union aliasing flx_read{ */
-/*         flx x; */
-/*         uptr read[2]; */
-/*     }; */
-
-/*     flx_read r; */
-/*     r.read[0] = ((auptr *)x)[0]; */
-/*     fuzz_atomics(); */
-/*     r.read[1] = ((auptr *)x)[1]; */
-/*     return r.x; */
-/*     /\* return *x; *\/ */
-/* } */
-
-/* flx readx(volatile flx *x){ */
-/*     flx a; */
-/*     (void) x; */
-/*     __atomic_compare_exchange(x, &a, &a, false, */
-/*                               __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); */
-/*     return a; */
-/* } */
-
-/* #define readx(x)({                              \ */
-/*             flx_read _r;                                   \ */
-/*             _r.read[0] = ((volatile flx_read *)x)->read[0]; \ */
-/*             fuzz_atomics();                     \ */
-/*             _r.read[1] = ((volatile flx_read *)x)->read[1]; \ */
-/*             _r.x;   \ */
-/*         }) */
-/* #define readx(x) atomic_read2(x) */
-
 #undef eq2
 #include <cstring>
 bool eq2(flx a, flx b){
@@ -271,7 +143,7 @@ bool eq2(flx a, flx b){
 static
 bool eq_upd(volatile flx *a, flx& b){
     flx old = b;
-    b = readx(a);
+    b = *a;
     return eq2(b, old);
 }
 
@@ -344,14 +216,14 @@ bool (updx_won)(const char *f, int l, flx n, volatile flx *a, flx& e){
 
 flat
 err (lflist_del)(flref a, type *t){
-    flx p = readx(&a->p);
+    flx p = a->p;
     if(p.st == COMMIT || a.gen != p.gen)
         return -1;
     return (lflist_del_upd)(a, p, a.gen);
 }
 
 err (lflist_jam_upd)(uptr ng, flref a, type *t){
-    flx p = readx(&a->p);
+    flx p = a->p;
     if(a.gen != p.gen)
         return -1;
     return (lflist_del_upd)(a, p, ng);
@@ -360,12 +232,11 @@ err (lflist_jam_upd)(uptr ng, flref a, type *t){
 err lflist_jam(flref a, type *t){
     return lflist_jam_upd(a.gen + 1, a, t);
 }
-#include <pthread.h>
+
 static flat
 err (lflist_del_upd)(flref a, flx& p, uptr ng){
-    flx n = readx(&a->n);
+    flx n = a->n;
     flx np, pn = {};
-    assert(!pn.pt);
     bool aborted = !abort_enq(a, p, pn);
     if(p.gen != a.gen || p.st == COMMIT)
         goto done;
@@ -413,7 +284,7 @@ err (help_next)(flx a, flx& n, flx& np, bool enq_aborted){
         if(!n)
             return -1;
 
-        np = readx(&n->p);
+        np = n->p;
         for(;;){
             if(np == a){
                 if(help_enq(a, n, np))
@@ -448,12 +319,12 @@ err (help_prev)(flx a, flx& p, flx& pn){
                 return 0;
 
         readpp:;
-            flx pp = readx(&p->p);
+            flx pp = p->p;
         newpp:;
             if(!pp || pp.st == COMMIT)
                 goto readp;
 
-            flx ppn = readx(&pp->n);
+            flx ppn = pp->n;
             for(;;){
                 if(!eq_upd(&p->p, pp))
                     goto newpp;
@@ -480,7 +351,7 @@ err (help_prev)(flx a, flx& p, flx& pn){
         if(!a.nil && (p.st == COMMIT || p.gen != a.gen))
             return EARG("Gen p abort %:%", a, p);
 
-        pn = readx(&p->n);
+        pn = p->n;
     }
 }
 
@@ -490,12 +361,12 @@ err help_enq(flx a, flx& n, flx& np){
        || n.st != RDY)
         return 0;
 
-    flx nn = readx(&n->n);
+    flx nn = n->n;
     if(nn.st != ADD)
         return 0;
     assert(nn.nil);
 
-    flx nnp = readx(&nn->p);
+    flx nnp = nn->p;
     if(nnp != a)
         return 0;
     if(!eq_upd(&a->n, n))
@@ -510,7 +381,7 @@ err abort_enq(flx a, flx& p, flx& pn){
     for(;;){
         if(p.st == COMMIT || p.gen != a.gen)
             return -1;
-        pn = readx(&p->n);
+        pn = p->n;
         if(p.st == RDY)
             return -1;
         for(;;){
@@ -544,13 +415,13 @@ err (lflist_enq)(flref a, type *t, lflist *l){
 }
 
 err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
-    flx p = readx(&a->p);
+    flx p = a->p;
     if(p.st != COMMIT || p.gen != a.gen)
         return -1;
-    flx n = readx(&a->n);
+    flx n = a->n;
 
     flx nil(l);
-    flx nilp = readx(&l->nil.p);
+    flx nilp = l->nil.p;
     flx nilpn = {};
 
     bool won = false;
@@ -589,7 +460,7 @@ err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
 
 flref (lflist_deq)(type *t, lflist *l){
     flx nil(l);
-    flx p = readx(&nil->p);
+    flx p = nil->p;
     for(;;){
         /* TODO: flinref */
         if(p.nil)
@@ -614,8 +485,8 @@ bool flanc_valid(volatile flanchor *a){
         return false;
 
     dbg flx
-        p = readx(&a->p),
-        n = readx(&a->n);
+        p = a->p,
+        n = a->n;
 
     if(!p){
         assert(p.st == COMMIT);
@@ -635,10 +506,10 @@ bool flanc_valid(volatile flanchor *a){
     {
 
     dbg flx
-        pn = readx(&p->n),
-        pp = readx(&p->p),
-        np = readx(&n->p),
-        nn = readx(&n->n);
+        pn = p->n,
+        pp = p->p,
+        np = n->p,
+        nn = n->n;
 
     bool nil = false;
     if(np == a)
@@ -655,8 +526,8 @@ bool flanc_valid(volatile flanchor *a){
                    np->p.st != COMMIT &&
                    np->n == n &&
                    np->n.st == COMMIT));
-        dbg flx pnn = readx(&pn->n);
-        dbg flx pnp = readx(&pn->p);
+        dbg flx pnn = pn->n;
+        dbg flx pnp = pn->p;
         assert((pn == a && pn.nil)
                || (pnn == a &&
                    pnn.nil &&
@@ -695,8 +566,8 @@ bool flanc_valid(volatile flanchor *a){
     }    
 done:
     /* Sniff out unpaused universe or reordering weirdness. */
-    assert(eq2(readx(&a->p), p));
-    assert(eq2(readx(&a->n), n));
+    assert(eq2(a->p, p));
+    assert(eq2(a->n, n));
 
     resume_universe();
     return true;
