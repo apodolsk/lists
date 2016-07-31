@@ -21,6 +21,7 @@ struct flx{
     
     uptr gen;
 
+    flx() = default;
     flx(flx x, flst st, uptr gen):
         st(st),
         nil(x.nil),
@@ -29,11 +30,15 @@ struct flx{
         {};
 
     flx(volatile lflist *l);
-    flx(volatile flanchor *l);
-
-    flx() = default;
+    flx(volatile flanchor *a);
+    flx(const flx &x) = default;
+    flx(volatile const flx &x);
+    
 
     operator volatile flanchor*();
+
+    void operator =(const volatile flx& x);
+    flx& operator =(const flx& x) = default;
     
     /* flanchor& operator*(); */
     flanchor* operator->();
@@ -89,6 +94,20 @@ flx::flx(volatile flanchor *a):
     gen(a->p.gen)
 {}
 
+/* void flx::operator =(const volatile flx& x){ */
+/*     union flx_read{ */
+/*         flx x; */
+/*         uptr read[2]; */
+/*     } aliasing; */
+
+/*     flx_read r; */
+/*     r.read[0] = ((volatile flx_read *)&x)->read[0]; */
+/*     fuzz_atomics(); */
+/*     r.read[1] = ((volatile flx_read *)&x)->read[1]; */
+/*     *this = r.x; */
+/* } */
+
+
 /* #define pt(x) ((flanchor *)(uptr)((x).pt << 3)) */
 
 /* flanchor& flx::operator*(){ */
@@ -124,18 +143,38 @@ flanchor* flx::operator->(){
 /*     r.read[1] = ((volatile flx_read *)x)->read[1]; */
 /*     return r.x; */
 /* } */
+
+/* flx readx(volatile flx *x){ */
+/*     /\* return *x; *\/ */
+/*     union flx_read{ */
+/*         flx x; */
+/*         uptr read[2]; */
+/*     } aliasing; */
+
+/*     flx_read r; */
+/*     r.read[0] = ((volatile flx_read *)x)->read[0]; */
+/*     fuzz_atomics(); */
+/*     r.read[1] = ((volatile flx_read *)x)->read[1]; */
+/*     return r.x; */
+/*     /\* return *x; *\/ */
+/* } */
+
 flx readx(volatile flx *x){
-    union flx_read{
+    typedef volatile aliasing uptr auptr;
+    /* return *x; */
+    union aliasing flx_read{
         flx x;
         uptr read[2];
-    } aliasing;
+    };
 
     flx_read r;
-    r.read[0] = ((volatile flx_read *)x)->read[0];
+    r.read[0] = ((auptr *)x)[0];
     fuzz_atomics();
-    r.read[1] = ((volatile flx_read *)x)->read[1];
+    r.read[1] = ((auptr *)x)[1];
     return r.x;
+    /* return *x; */
 }
+
 /* #define readx(x)({                              \ */
 /*             flx_read _r;                                   \ */
 /*             _r.read[0] = ((volatile flx_read *)x)->read[0]; \ */
@@ -177,6 +216,7 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile flx *a, flx& e){
     /*     return true; */
     /* } */
     fuzz_atomics();
+    (void) a;
     if(__atomic_compare_exchange(a, &e, &n, false,
                                  __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){
         printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n",
