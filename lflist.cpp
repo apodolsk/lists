@@ -1,10 +1,8 @@
 #ifndef FAKELOCKFREE
 
-using namespace std;
-
-struct type;
-
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
+
+using namespace std;
 
 struct lflist;
 struct flanchor;
@@ -13,32 +11,72 @@ struct flref{
     flanchor *ptr;
     uptr gen;
 
-    flref(flanchor *a);
     flref() = default;
-    
-    flanchor* operator->() const{
+    flref(flanchor *a);
+
+    operator flanchor*() const{
         return ptr;
     }
 
-    operator flanchor*() const{
+    flanchor* operator->() const{
         return ptr;
     }
 };
 
 extern "C"{
+/* This version of lflist just assumes type stability. In general, the
+   linref stuff just adds line noise to lflist. */
+    struct type;
+    
     extern void fake_linref_up(void);
     
     err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
     err lflist_enq(flref a, type *t, lflist *l);
 
-    flref lflist_deq(type *t, lflist *l);
-
     err lflist_del(flref a, type *t);
     err lflist_jam_upd(uptr ng, flref a, type *t);
     err lflist_jam(flref a, type *t);
+
+    flref lflist_deq(type *t, lflist *l);
+
     bool flanc_valid(flanchor *a);
 }
 
+/* The states can mean different things for flanchor::n and flanchor::p.
+
+   A->p.st == COMMIT iff A is enqable. del() and enq() return 0 iff they
+   can set and unset p.st = COMMIT, respectively. 
+
+   A->p.st == RDY means nothing except the absence of other
+   states. Namely, the absence of COMMIT.
+
+   A->p.st == ADD iff A->p hasn't been written since the last enq(A). In
+   (only) this case, del(A->p) must check whether the enq(A) is incomplete
+   and needs helped. Otherwise, it's treated like RDY.
+   - ADD is just an optimization. The point is that, if A->p.st != ADD,
+     then del(A->p) can avoid the cost of such a check. 
+   
+   A->p.st == ABORT iff a del(A) tried to abort an enq(A). It's possible
+   that this del(A) "spuriously" set ABORT after enq(A) finished, so ABORT
+   is treated like RDY by every function except enq(A). It's a "harmless"
+   signal to enq(A).
+
+   ------
+
+   A->n.st == COMMIT iff a del(A) committed to writing "P"->n. del(A->n)
+   takes it as a signal to try and help del(A) before committing to
+   writing A->n.
+
+   A->n.st == RDY iff no del(A) is "committed". A->pt can only be written
+   when A->n.st == RDY. Implies A->p.st != COMMIT.
+
+   A->n.st == ADD iif A->n hasn't been written since enq(A). Exactly
+   analogous to A->p.st == ADD.
+
+   A->n.st == ABORT is currently unused. There's a good hypothetical use
+   for it, but it'd also be an optimization.
+
+*/
 enum flst{
     COMMIT,
     RDY,
@@ -59,19 +97,10 @@ struct flx{
         nil(x.nil),
         pt(x.pt),
         gen(gen)
-        {};
+        {}
 
     explicit flx(lflist *l);
     flx(flref r);
-    
-    flx(atomic<flx>& a){
-        typedef aliasing uptr auptr;
-        ((auptr *) this)[0] = ((volatile auptr *) &a)[0];
-        ((auptr *) this)[1] = ((volatile auptr *) &a)[1];
-    }
-    void operator =(atomic<flx>& a){
-        *this = flx(a);
-    };
 
     operator flanchor*() const{
         return (flanchor *)(uptr)(pt << 3);
@@ -79,11 +108,32 @@ struct flx{
     flanchor* operator->() const{
         return *this;
     }
+
+    /* NB: operator== is undefined. Instead, == implicitly converts flx
+       arguments to flanchor *, effectively making a comparison against
+       flx::pt. "Full" comparison against state bits, etc. is done via
+       eq2. */
+};
+
+/* NB: load is used to convert atomic<flx> to flx, e.g. in flx np =
+   ((flanchor *) n)->p.
+
+   The absence of a 16B MOV on x86 forces atomic<flx>::load to use an
+   expensive CAS2(this, 0, 0). I redefine load to make non-atomic reads,
+   which suffice. */
+class half_atomic_flx : public atomic<flx>{
+    flx load(memory_order order = memory_order_seq_cst) const{
+        flx r;
+        typedef aliasing uptr auptr;
+        ((auptr *) &r)[0] = ((volatile auptr *) this)[0];
+        ((auptr *) &r)[1] = ((volatile auptr *) this)[1];
+        return r;
+    }
 };
 
 struct flanchor{
-    atomic<flx> n;
-    atomic<flx> p;
+    half_atomic_flx n;
+    half_atomic_flx p;
 } align(2 * sizeof(dptr));
 
 struct lflist{
@@ -122,7 +172,7 @@ flx::flx(flref r):
 #include <cstring>
 template<class T>
 bool eq2(T a, T b){
-    return !memcmp(&a, &b, sizeof(a));
+    return !memcmp(&a, &b, sizeof(dptr));
 }
 static
 bool eq_upd(atomic<flx> *a, flx& b){
@@ -131,24 +181,23 @@ bool eq_upd(atomic<flx> *a, flx& b){
     return eq2(b, old);
 }
 
-static inline
-const char *flstatestr(uptr s){
+
+static inline constexpr
+const char *flststr(flst s){
     return (const char *[]){"COMMIT", "RDY", "ADD", "ABORT"}[s];
 }
-
 #define raw_updx_won(as...) raw_updx_won(__func__, __LINE__, as)
 static
 bool (raw_updx_won)(const char *f, int l, flx n, atomic<flx>* a, flx& e){
+    
     fuzz_atomics();
 
-    if(__atomic_compare_exchange((flx *) a, &e, &n,
-                                 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){
-    /* if(a->compare_exchange_strong(e, n)){ */
-        /* printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
-        /*        get_dbg_id(), */
-        /*        f, l, a, */
-        /*        (volatile flanchor *) e, e.nil, flstatestr(e.st), e.gen, */
-        /*        (volatile flanchor *) n, n.nil, flstatestr(n.st), n.gen); */
+    if(a->compare_exchange_strong(e, n)){
+        printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n",
+               get_dbg_id(),
+               f, l, a,
+               (volatile flanchor *) e, e.nil, flststr(e.st), e.gen,
+               (volatile flanchor *) n, n.nil, flststr(n.st), n.gen);
         e = n;
         return true;
     }
@@ -441,7 +490,8 @@ bool flanc_valid(flanchor *_a){
     if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
         return false;
     
-    /* Here comes something nasty. */
+    /* Here comes something nasty. atomic<flx> disallows direct member
+       access, as in "n->p.st". It's suuuper inconvenient here. */
     struct owned_flanchor;
     struct owned_flx{
         flst st:2;
@@ -462,7 +512,6 @@ bool flanc_valid(flanchor *_a){
         owned_flx n;
         owned_flx p;
     };
-
 
     owned_flanchor *a = (owned_flanchor *) _a;
     
