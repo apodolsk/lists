@@ -39,7 +39,6 @@ extern "C"{
     bool flanc_valid(flanchor *a);
 }
 
-
 enum flst{
     COMMIT,
     RDY,
@@ -65,17 +64,12 @@ struct flx{
     explicit flx(lflist *l);
     flx(flref r);
     
-    flx(const atomic<flx>& a){
-         union flx_read{
-            flx x;
-            uptr read[2];
-        } aliasing r;
-        r.read[0] = ((volatile flx_read *) &a)->read[0];
-        fuzz_atomics();
-        r.read[1] = ((volatile flx_read *) &a)->read[1];
-        *this = r.x;
+    flx(atomic<flx>& a){
+        typedef aliasing uptr auptr;
+        ((auptr *) this)[0] = ((volatile auptr *) &a)[0];
+        ((auptr *) this)[1] = ((volatile auptr *) &a)[1];
     }
-    void operator =(const atomic<flx>& a){
+    void operator =(atomic<flx>& a){
         *this = flx(a);
     };
 
@@ -131,7 +125,7 @@ bool eq2(T a, T b){
     return !memcmp(&a, &b, sizeof(a));
 }
 static
-bool eq_upd(volatile atomic<flx> *a, flx& b){
+bool eq_upd(atomic<flx> *a, flx& b){
     flx old = b;
     b = *a;
     return eq2(b, old);
@@ -144,10 +138,12 @@ const char *flstatestr(uptr s){
 
 #define raw_updx_won(as...) raw_updx_won(__func__, __LINE__, as)
 static
-bool (raw_updx_won)(const char *f, int l, flx n, volatile atomic<flx>* a, flx& e){
+bool (raw_updx_won)(const char *f, int l, flx n, atomic<flx>* a, flx& e){
     fuzz_atomics();
-    
-    if(a->compare_exchange_strong(e, n)){
+
+    if(__atomic_compare_exchange((flx *) a, &e, &n,
+                                 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)){
+    /* if(a->compare_exchange_strong(e, n)){ */
         /* printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
         /*        get_dbg_id(), */
         /*        f, l, a, */
@@ -161,7 +157,7 @@ bool (raw_updx_won)(const char *f, int l, flx n, volatile atomic<flx>* a, flx& e
 
 #define updx_won(as...) updx_won(__func__, __LINE__, as)
 static
-bool (updx_won)(const char *f, int l, flx n, volatile atomic<flx> *a, flx& e){
+bool (updx_won)(const char *f, int l, flx n, atomic<flx> *a, flx& e){
     assert(!eq2(n, e));
     assert(aligned_pow2((flanchor *) n, alignof(flanchor)));
     assert(n || n.st == COMMIT);
@@ -241,7 +237,7 @@ err (help_next)(flx a, flx& n, flx& np, bool enq_aborted){
     for(;;){
         if(!n)
             return -1;
-
+        
         np = n->p;
         for(;;){
             if(np == a){
@@ -387,6 +383,7 @@ err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
     for(;;){
         if(help_prev(nil, nilp, nilpn)){
             if(nilpn != nil){
+                /* assert(nilpn->n == nil); */
                 /* assert((flx(nilpn->n) == nil */
                 /*         && nilpn->n.st == ADD */
                 /*         && (nilpn->p.st == ADD || nilpn->p.st == ABORT) */
@@ -437,39 +434,40 @@ bool (flanchor_unused)(flanchor *a){
     return flx(a->p).st == COMMIT;
 }
 
-struct owned_flanchor;
-struct owned_flx{
-    flst st:2;
-    uptr nil:1;
-    uptr pt:WORDBITS-3;
-    
-    uptr gen;
-
-    operator owned_flanchor*() const{
-        return (owned_flanchor *)(uptr)(pt << 3);
-    };
-    owned_flanchor* operator->() const{
-        return *this;
-    };
-};
-
-struct owned_flanchor{
-    owned_flx n;
-    owned_flx p;
-    
-    operator owned_flanchor&() const;    
-};
-
 /* TODO: printf isn't reentrant. Watch CPU usage for deadlock upon assert
    print failure.  */
 bool flanc_valid(flanchor *_a){
+    
+    if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
+        return false;
+    
+    /* Here comes something nasty. */
+    struct owned_flanchor;
+    struct owned_flx{
+        flst st:2;
+        uptr nil:1;
+        uptr pt:WORDBITS-3;
+    
+        uptr gen;
+
+        operator owned_flanchor*() const{
+            return (owned_flanchor *)(uptr)(pt << 3);
+        };
+        owned_flanchor* operator->() const{
+            return *this;
+        };
+    };
+
+    struct owned_flanchor{
+        owned_flx n;
+        owned_flx p;
+    };
+
+
     owned_flanchor *a = (owned_flanchor *) _a;
     
 #define flanchor owned_flanchor
 #define flx owned_flx
-    
-    if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
-        return false;
 
     dbg flx
         p = a->p,
