@@ -82,10 +82,10 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
 }
 
 err (lflist_jam)(flx a, type *t){
-    return lflist_jam_upd(a.gen + 1, a, t);
+    return lflist_del_upd(a.gen + 1, a, t);
 }
 
-err (lflist_jam_upd)(uptr ng, flx a, type *t){
+err (lflist_del_upd)(uptr ng, flx a, type *t){
     for(stx ax = a.ptr->stx;;){
         if(ax.gen != a.gen)
             return -1;

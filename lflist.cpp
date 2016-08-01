@@ -25,7 +25,7 @@ struct flref{
 
 extern "C"{
 /* This version of lflist just assumes type stability. In general, the
-   linref stuff just adds line noise to lflist. */
+   linref stuff just adds trivial line noise to lflist. */
     struct type;
     
     extern void fake_linref_up(void);
@@ -33,8 +33,8 @@ extern "C"{
     err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
     err lflist_enq(flref a, type *t, lflist *l);
 
+    err lflist_del_upd(uptr ng, flref a, type *t);
     err lflist_del(flref a, type *t);
-    err lflist_jam_upd(uptr ng, flref a, type *t);
     err lflist_jam(flref a, type *t);
 
     flref lflist_deq(type *t, lflist *l);
@@ -112,7 +112,7 @@ struct flx{
     /* NB: operator== is undefined. Instead, == implicitly converts flx
        arguments to flanchor *, effectively making a comparison against
        flx::pt. "Full" comparison against state bits, etc. is done via
-       eq2. */
+       eq2 and eq_upd. */
 };
 
 /* NB: load is used to convert atomic<flx> to flx, e.g. in flx np =
@@ -145,8 +145,6 @@ static err help_prev(flx a, flx& p, flx& pn);
 
 static err help_enq(flx a, flx& n, flx& np);
 static err abort_enq(flx a, flx& p, flx& pn);
-
-static err lflist_del_upd(flref a, flx& p, uptr ng);
 
 #define to_pt(flanc) (((uptr) (flanc)) >> 3)
 
@@ -193,11 +191,11 @@ bool (raw_updx_won)(const char *f, int l, flx n, atomic<flx>* a, flx& e){
     fuzz_atomics();
 
     if(a->compare_exchange_strong(e, n)){
-        printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n",
-               get_dbg_id(),
-               f, l, a,
-               (volatile flanchor *) e, e.nil, flststr(e.st), e.gen,
-               (volatile flanchor *) n, n.nil, flststr(n.st), n.gen);
+        /* printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
+        /*        get_dbg_id(), */
+        /*        f, l, a, */
+        /*        (volatile flanchor *) e, e.nil, flststr(e.st), e.gen, */
+        /*        (volatile flanchor *) n, n.nil, flststr(n.st), n.gen); */
         e = n;
         return true;
     }
@@ -217,29 +215,20 @@ bool (updx_won)(const char *f, int l, flx n, atomic<flx> *a, flx& e){
     return w;
 }
 
-flat
 err (lflist_del)(flref a, type *t){
-    flx p = a->p;
-    if(p.st == COMMIT || a.gen != p.gen)
-        return -1;
-    return (lflist_del_upd)(a, p, a.gen);
+    return (lflist_del_upd)(a.gen, a, t);
 }
 
-err (lflist_jam_upd)(uptr ng, flref a, type *t){
-    flx p = a->p;
-    if(a.gen != p.gen)
-        return -1;
-    return (lflist_del_upd)(a, p, ng);
+err (lflist_jam)(flref a, type *t){
+    return lflist_del_upd(a.gen + 1, a, t);
 }
 
-err lflist_jam(flref a, type *t){
-    return lflist_jam_upd(a.gen + 1, a, t);
-}
-
-static flat
-err (lflist_del_upd)(flref a, flx& p, uptr ng){
-    flx n = a->n;
-    flx np, pn = {};
+flat
+err (lflist_del_upd)(uptr ng, flref a, type *t){
+    flx n = a->n,
+        np;
+    flx p = a->p,
+        pn = {};
     bool aborted = !abort_enq(a, p, pn);
     if(p.gen != a.gen || p.st == COMMIT)
         goto done;
@@ -275,7 +264,7 @@ done:
     while(a.gen == p.gen){
         if(ng == a.gen && p.st == COMMIT)
             return -1;
-        if(updx_won(rup(p, .st = COMMIT, .pt = 0, .gen = ng), &a->p, p))
+        if(updx_won(flx((flx){}, COMMIT, ng), &a->p, p))
             return 0;
     }
     return -1;
@@ -419,6 +408,8 @@ err (lflist_enq)(flref a, type *t, lflist *l){
 }
 
 err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
+    assert(ng != a.gen);
+    
     flx p = a->p;
     if(p.st != COMMIT || p.gen != a.gen)
         return -1;
@@ -431,17 +422,9 @@ err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
     bool won = false;
     for(;;){
         if(help_prev(nil, nilp, nilpn)){
-            if(nilpn != nil){
-                /* assert(nilpn->n == nil); */
-                /* assert((flx(nilpn->n) == nil */
-                /*         && nilpn->n.st == ADD */
-                /*         && (nilpn->p.st == ADD || nilpn->p.st == ABORT) */
-                /*         && nilpn->p == nilp) */
-                /*         || !eq2(l->nil.p, nilp)); */
-                
-                updx_won(flx(nilpn, RDY, nilp.gen + 1), &nil->p, nilp);
-                nilpn = (flx){};
-            }
+            assert(nilpn != nil);
+            updx_won(flx(nilpn, RDY, nilp.gen + 1), &nil->p, nilp);
+            nilpn = (flx){};
             continue;
         }
 

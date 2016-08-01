@@ -1,5 +1,8 @@
 #pragma once
 
+/* NB: lflist.cpp doesn't actually include this. You're better off reading
+   lflist.cpp. Interface is documented inside the extern "C" block. */
+
 typedef struct{
     volatile struct flanchor *ptr;
     uptr gen;
@@ -59,17 +62,6 @@ typedef volatile struct lflist{
                : 5 + (uptr) (l)},                                       \
     }}
 
-/* static inline constfun */
-/* flanchor *flptr(flx a){ */
-/*     assert(!a.nil); */
-/*     return (flanchor *)(uptr)(a.pt << 3); */
-/* } */
-
-/* static inline */
-/* flx flx_of(flanchor *a){ */
-/*     return (flx){.pt = ((uptr) a) >> 3, .gen = a->p.gen}; */
-/* } */
-
 static inline constfun
 flanchor *flptr(flref a){
     return a.ptr;
@@ -86,30 +78,15 @@ flref flref_of(flanchor *a){
 flanchor *flptr(flref a);
 flref flref_of(flanchor *a);
 
-/* TODO: replace flx_of() with flarg() to pass the complete value of
-   a->p to enq/deq/etc and omit the redundant a->p read there. */
-
 err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
 err lflist_enq(flref a, type *t, lflist *l);
 
 flref lflist_deq(type *t, lflist *l);
 
+err lflist_del_upd(uptr ng, flref a, type *t);
 err lflist_del(flref a, type *t);
-err lflist_jam_upd(uptr ng, flref a, type *t);
 err lflist_jam(flref a, type *t);
 
-bool mgen_upd_won(uptr g, flref a, type *t);
-
-flref lflist_peek(lflist *l);
-flref lflist_next(flref p, lflist *l);
-
-bool flanchor_unused(flanchor *a);
-
-void flanc_ordered_init(uptr g, flanchor *a);
-
-void lflist_report_profile(void);
-
-/* TODO: should probably change back to no-pause-universe scheme. */
 bool flanc_valid(flanchor *a);
 
 #ifndef FAKELOCKFREE
@@ -134,13 +111,12 @@ const char *flstatestr(uptr s){
 #define LOG_LFLISTM 0
 #endif
 
-#define mgen_upd_won(g, a, t) trace(LFLISTM, 2, mgen_upd_won, PUN(mgen, g), a, t)
-
-#define lflist_jam_upd(ng, a, t)                                        \
-    linref_account(0, trace(LFLISTM, 2, lflist_jam_upd, PUN(uptr, ng), a, t))
-
 #define lflist_enq_upd(ng, a, t, l)                                     \
     linref_account(0, trace(LFLISTM, 2, lflist_enq_upd, PUN(uptr, ng), a, t, l))
+
+
+#define lflist_del_upd(ng, a, t)                                        \
+    linref_account(0, trace(LFLISTM, 2, lflist_del_upd, PUN(uptr, ng), a, t))
 
 
 #define lflist_del(as...) linref_account(0, trace(LFLISTM, 2, lflist_del, as))
@@ -148,5 +124,3 @@ const char *flstatestr(uptr s){
     linref_account(flptr(account_expr) ? 1 : 0, trace(LFLISTM, 2, lflist_deq, as))
 #define lflist_enq(as...) linref_account(0, trace(LFLISTM, 2, lflist_enq, as))
 #define lflist_jam(as...) linref_account(0, trace(LFLISTM, 2, lflist_jam, as))
-#define lflist_peek(as...) trace(LFLISTM, 2, lflist_peek, as)
-#define lflist_next(as...) trace(LFLISTM, 2, lflist_next, as)
