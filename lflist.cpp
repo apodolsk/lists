@@ -1,48 +1,12 @@
 #ifndef FAKELOCKFREE
 
+#include <lflist.hpp>
+
 #define FLANC_CHECK_FREQ E_DBG_LVL ? 50 : 0
 
 using namespace std;
 
-struct lflist;
-struct flanchor;
-
-struct flref{
-    flanchor *ptr;
-    uptr gen;
-
-    flref() = default;
-    flref(flanchor *a);
-
-    operator flanchor*() const{
-        return ptr;
-    }
-
-    flanchor* operator->() const{
-        return ptr;
-    }
-};
-
-extern "C"{
-/* This version of lflist just assumes type stability. In general, the
-   linref stuff just adds trivial line noise to lflist. */
-    struct type;
-    
-    extern void fake_linref_up(void);
-    
-    err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
-    err lflist_enq(flref a, type *t, lflist *l);
-
-    err lflist_del_upd(uptr ng, flref a, type *t);
-    err lflist_del(flref a, type *t);
-    err lflist_jam(flref a, type *t);
-
-    flref lflist_deq(type *t, lflist *l);
-
-    bool flanc_valid(flanchor *a);
-}
-
-/* The states can mean different things for flanchor::n and flanchor::p.
+/* The flx::st can mean different things for flanchor::n and flanchor::p.
 
    A->p.st == COMMIT iff A is enqable. del() and enq() return 0 iff they
    can set and unset p.st = COMMIT, respectively. 
@@ -75,70 +39,7 @@ extern "C"{
 
    A->n.st == ABORT is currently unused. There's a good hypothetical use
    for it, but it'd also be an optimization.
-
 */
-enum flst{
-    COMMIT,
-    RDY,
-    ADD,
-    ABORT,
-};
-
-struct flx{
-    flst st:2;
-    uptr nil:1;
-    uptr pt:WORDBITS-3;
-    
-    uptr gen;
-
-    flx() = default;
-    flx(flx x, flst st, uptr gen):
-        st(st),
-        nil(x.nil),
-        pt(x.pt),
-        gen(gen)
-        {}
-
-    explicit flx(lflist *l);
-    flx(flref r);
-
-    operator flanchor*() const{
-        return (flanchor *)(uptr)(pt << 3);
-    }
-    flanchor* operator->() const{
-        return *this;
-    }
-
-    /* NB: operator== is undefined. Instead, == implicitly converts flx
-       arguments to flanchor *, effectively making a comparison against
-       flx::pt. "Full" comparison against state bits, etc. is done via
-       eq2 and eq_upd. */
-};
-
-/* NB: load is used to convert atomic<flx> to flx, e.g. in flx np =
-   ((flanchor *) n)->p.
-
-   The absence of a 16B MOV on x86 forces atomic<flx>::load to use an
-   expensive CAS2(this, 0, 0). I redefine load to make non-atomic reads,
-   which suffice. */
-class half_atomic_flx : public atomic<flx>{
-    flx load(memory_order order = memory_order_seq_cst) const{
-        flx r;
-        typedef aliasing uptr auptr;
-        ((auptr *) &r)[0] = ((volatile auptr *) this)[0];
-        ((auptr *) &r)[1] = ((volatile auptr *) this)[1];
-        return r;
-    }
-};
-
-struct flanchor{
-    half_atomic_flx n;
-    half_atomic_flx p;
-} align(2 * sizeof(dptr));
-
-struct lflist{
-    flanchor nil;
-};
 
 static err help_next(flx a, flx& n, flx& np, bool enq_aborted);
 static err help_prev(flx a, flx& p, flx& pn);
@@ -146,27 +47,9 @@ static err help_prev(flx a, flx& p, flx& pn);
 static err help_enq(flx a, flx& n, flx& np);
 static err abort_enq(flx a, flx& p, flx& pn);
 
-#define to_pt(flanc) (((uptr) (flanc)) >> 3)
+static bool updx_valid(flx n, atomic<flx>* a, flx& e);
+static void report_updx_won(const char *f, int l, flx n, atomic<flx>* a, flx& e);
 
-flref::flref(flanchor *a):
-    ptr(a),
-    gen(flx(a->p).gen){}
-
-flx::flx(lflist *l):
-    st(),
-    nil(1),
-    pt(to_pt(&l->nil)),
-    gen()
-{}
-
-flx::flx(flref r):
-    st(),
-    nil(),
-    pt(to_pt(r.ptr)),
-    gen(r.gen)
-{}
-
-#undef eq2
 #include <cstring>
 template<class T>
 bool eq2(T a, T b){
@@ -178,24 +61,12 @@ bool eq_upd(atomic<flx> *a, flx& b){
     b = *a;
     return eq2(b, old);
 }
-
-
-static inline constexpr
-const char *flststr(flst s){
-    return (const char *[]){"COMMIT", "RDY", "ADD", "ABORT"}[s];
-}
+    
 #define raw_updx_won(as...) raw_updx_won(__func__, __LINE__, as)
 static
 bool (raw_updx_won)(const char *f, int l, flx n, atomic<flx>* a, flx& e){
-    
-    fuzz_atomics();
-
     if(a->compare_exchange_strong(e, n)){
-        /* printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
-        /*        get_dbg_id(), */
-        /*        f, l, a, */
-        /*        (volatile flanchor *) e, e.nil, flststr(e.st), e.gen, */
-        /*        (volatile flanchor *) n, n.nil, flststr(n.st), n.gen); */
+        report_updx_won(f, l, n, a, e);
         e = n;
         return true;
     }
@@ -205,14 +76,8 @@ bool (raw_updx_won)(const char *f, int l, flx n, atomic<flx>* a, flx& e){
 #define updx_won(as...) updx_won(__func__, __LINE__, as)
 static
 bool (updx_won)(const char *f, int l, flx n, atomic<flx> *a, flx& e){
-    assert(!eq2(n, e));
-    assert(aligned_pow2((flanchor *) n, alignof(flanchor)));
-    assert(n || n.st == COMMIT);
-    assert(n.nil || n != cof_aligned_pow2(a, flanchor));
-
-    bool w = (raw_updx_won)(f, l, n, a, e);
-    assert((flanc_valid(cof_aligned_pow2(a, flanchor)), 1));
-    return w;
+    assert(updx_valid(n, a, e));
+    return (raw_updx_won)(f, l, n, a, e);
 }
 
 err (lflist_del)(flref a, type *t){
@@ -256,9 +121,9 @@ err (lflist_del_upd)(uptr ng, flref a, type *t){
     }
 
     {
-        flx np_alt = rup(np, .st = ABORT);
+        flx np_aborted = rup(np, .st = ABORT);
         if(!updx_won(flx(p, RDY, np.gen + n.nil), &n->p, np))
-            updx_won(flx(p, RDY, np.gen + n.nil), &n->p, np_alt);
+            updx_won(flx(p, RDY, np.gen + n.nil), &n->p, np_aborted);
     }
 done:
     while(a.gen == p.gen){
@@ -446,11 +311,10 @@ err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
     return 0;
 }
 
-flref (lflist_deq)(type *t, lflist *l){
+flref (lflist_unenq)(type *t, lflist *l){
     flx nil(l);
     flx p = nil->p;
     for(;;){
-        /* TODO: flinref */
         if(p.nil)
             return (flref){};
         flref r(p);
@@ -462,14 +326,31 @@ flref (lflist_deq)(type *t, lflist *l){
     }
 }
 
-bool (flanchor_unused)(flanchor *a){
-    return flx(a->p).st == COMMIT;
+static
+bool updx_valid(flx n, atomic<flx>* a, flx& e){
+    assert(!eq2(n, e));
+    assert(n || n.st == COMMIT);
+    assert(n.nil || n != cof_aligned_pow2(a, flanchor));
+    return true;
 }
 
-/* TODO: printf isn't reentrant. Watch CPU usage for deadlock upon assert
-   print failure.  */
+static inline constexpr
+const char *flststr(flst s){
+    return (const char *[]){"COMMIT", "RDY", "ADD", "ABORT"}[s];
+}
+static 
+void report_updx_won(const char *f, int l, flx n, atomic<flx>* a, flx& e){
+    /* printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
+    /*              get_dbg_id(), */
+    /*              f, l, a, */
+    /*              (volatile flanchor *) e, e.nil, flststr(e.st), e.gen, */
+    /*        (volatile flanchor *) n, n.nil, flststr(n.st), n.gen); */
+    assert(flanc_valid(cof_aligned_pow2(a, flanchor)), 1);
+}
+
+/* TODO: printf isn't async-signal-safe. Watch CPU usage for deadlock upon
+   printf call in assert(). */
 bool flanc_valid(flanchor *_a){
-    
     if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
         return false;
     
@@ -498,10 +379,7 @@ bool flanc_valid(flanchor *_a){
 
     owned_flanchor *a = (owned_flanchor *) _a;
     
-#define flanchor owned_flanchor
-#define flx owned_flx
-
-    dbg flx
+    dbg owned_flx
         p = a->p,
         n = a->n;
 
@@ -522,7 +400,7 @@ bool flanc_valid(flanchor *_a){
     }
     {
 
-    dbg flx
+    dbg owned_flx
         pn = p->n,
         pp = p->p,
         np = n->p,
@@ -543,8 +421,8 @@ bool flanc_valid(flanchor *_a){
                    np->p.st != COMMIT &&
                    np->n == n &&
                    np->n.st == COMMIT));
-        dbg flx pnn = pn->n;
-        dbg flx pnp = pn->p;
+        dbg owned_flx pnn = pn->n;
+        dbg owned_flx pnp = pn->p;
         assert((pn == a && pn.nil)
                || (pnn == a &&
                    pnn.nil &&
@@ -590,5 +468,6 @@ done:
     return true;
     /* return true; */
 }
+
 
 #endif

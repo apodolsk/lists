@@ -49,7 +49,7 @@ err (lflist_del)(flx a, type *t){
     return 0;
 }
 
-flx (lflist_deq)(type *t, lflist *l){
+flx (lflist_unenq)(type *t, lflist *l){
     lock_lflist(l);
     flx rlx = (flx){};
     flanchor *r = cof(list_deq(&l->l), flanchor, lanc);

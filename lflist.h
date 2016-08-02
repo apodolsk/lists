@@ -81,7 +81,7 @@ flref flref_of(flanchor *a);
 err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
 err lflist_enq(flref a, type *t, lflist *l);
 
-flref lflist_deq(type *t, lflist *l);
+flref lflist_unenq(type *t, lflist *l);
 
 err lflist_del_upd(uptr ng, flref a, type *t);
 err lflist_del(flref a, type *t);
@@ -120,7 +120,7 @@ const char *flstatestr(uptr s){
 
 
 #define lflist_del(as...) linref_account(0, trace(LFLISTM, 2, lflist_del, as))
-#define lflist_deq(as...)                       \
-    linref_account(flptr(account_expr) ? 1 : 0, trace(LFLISTM, 2, lflist_deq, as))
+#define lflist_unenq(as...)                       \
+    linref_account(flptr(account_expr) ? 1 : 0, trace(LFLISTM, 2, lflist_unenq, as))
 #define lflist_enq(as...) linref_account(0, trace(LFLISTM, 2, lflist_enq, as))
 #define lflist_jam(as...) linref_account(0, trace(LFLISTM, 2, lflist_jam, as))
