@@ -6,39 +6,38 @@
 
 using namespace std;
 
-/* The flx::st can mean different things for flanchor::n and flanchor::p.
+/* flx::st can mean different things for flanchor::n and flanchor::p. 
 
    A->p.st == COMMIT iff A is enqable. del() and enq() return 0 iff they
    can set and unset p.st = COMMIT, respectively. 
 
-   A->p.st == RDY means nothing except the absence of other
-   states. Namely, the absence of COMMIT.
+   A->p.st == RDY is just the absence of other states. 
 
    A->p.st == ADD iff A->p hasn't been written since the last enq(A). In
-   (only) this case, del(A->p) must check whether the enq(A) is incomplete
-   and needs helped. Otherwise, it's treated like RDY.
-   - ADD is just an optimization. The point is that, if A->p.st != ADD,
-     then del(A->p) can avoid the cost of such a check. 
+   this case, del(A->p) must check whether the enq(A) is incomplete and
+   needs helped. 
+   - ADD is an optimization, and could be replaced with RDY. If A->p.st !=
+     ADD, then the check avoid the cost of such a check.
    
-   A->p.st == ABORT iff a del(A) tried to abort an enq(A). It's possible
-   that this del(A) "spuriously" set ABORT after enq(A) finished, so ABORT
-   is treated like RDY by every function except enq(A). It's a "harmless"
-   signal to enq(A).
+   A->p.st == ABORT iff a del(A) tried to abort an enq(A). del() may set
+   "spuriously" set ABORT after an enq(A) finishes, so ABORT is treated
+   like RDY outside of enq(A). It's a "harmless" signal to enq(A).
 
    ------
 
-   A->n.st == COMMIT iff a del(A) committed to writing "P"->n. del(A->n)
-   takes it as a signal to try and help del(A) before committing to
-   writing A->n.
+   A->n.st == COMMIT only if a del(A) committed to a "P"->n
+   write. del(A->n) takes it as a signal to try and help del(A) before
+   committing to an A->n write.
 
-   A->n.st == RDY iff no del(A) is "committed". A->pt can only be written
-   when A->n.st == RDY. Implies A->p.st != COMMIT.
+   A->n.st == RDY iff no del(A) is "committed", or every committed del(A)
+   is guaranteed to fail. A->pt can only be written when A->n.st ==
+   RDY. Implies A->p.st != COMMIT.
 
    A->n.st == ADD iif A->n hasn't been written since enq(A). Exactly
    analogous to A->p.st == ADD.
 
-   A->n.st == ABORT is currently unused. There's a good hypothetical use
-   for it, but it'd also be an optimization.
+   A->n.st == ABORT is currently unused. There's a hypothetical use for
+   it, but it's not critical.
 */
 
 
@@ -47,50 +46,128 @@ using namespace std;
 */
 
 static bool truly_eq(flx a, flx b);
-static bool changed(atomic<flx> *src, flx& read);
+static bool changed(atomic<flx> *src, flx &read);
 
-static bool updx_won(flx n, atomic<flx>* a, flx& e);
+static bool updx_won(flx write, atomic<flx> *a, flx &expect);
 
-static err help_next(flx a, flx& n, flx& np, bool enq_aborted);
-static err help_prev(flx a, flx& p, flx& pn);
+static err help_next(flx a, flx &n, flx &np, bool enq_aborted);
+static err help_prev(flx a, flx &p, flx &pn);
 
-static err help_enq(flx a, flx& n, flx& np);
-static err abort_enq(flx a, flx& p, flx& pn);
+static err help_enq(flx a, flx &n, flx &np);
+static err abort_enq(flx a, flx &p, flx &pn);
 
-static bool updx_valid(flx n, atomic<flx>* a, flx e);
-static void report_updx_won(flx n, atomic<flx>* a, flx e,
+static bool updx_valid(flx n, atomic<flx> *p, flx e);
+static void report_updx_won(flx n, atomic<flx> *p, flx e,
                             const char *func, int line);
 
-/* As noted, == on flx compares only flx::pt. */
+/* == on flx compares only flx::pt. */
 static
 bool truly_eq(flx a, flx b){
     return !memcmp(&a, &b, sizeof(dptr));
 }
 
 static
-bool changed(atomic<flx> *src, flx& read){
+bool changed(atomic<flx> *p, flx &read){
     flx old = read;
-    read = *src;
+    read = *p;
     return !truly_eq(read, old);
 }
 
 static
-bool updx_won(flx n, atomic<flx>* a, flx& e){
-    bool won = a->compare_exchange_strong(e, n);
+bool updx_won(flx n, atomic<flx> *p, flx &e){
+    bool won = p->compare_exchange_strong(e, n);
     if(won)
         e = n;
     return won;
 }
 
-#define trace_updx(n, a, e) ({                                      \
+#define trace_updx(n, p, e) ({                                      \
             flx _old = e;                                           \
-            bool _won = (updx_won)(n, a, e);                        \
+            bool _won = (updx_won)(n, p, e);                        \
             if(_won)                                                \
-                report_updx_won(n, a, _old, __func__, __LINE__);    \
+                report_updx_won(n, p, _old, __func__, __LINE__);    \
             _won;                                                   \
         })
-#define raw_updx_won(n, a, e) trace_updx(n, a, e)
-#define updx_won(n, a, e) (assert(updx_valid(n, a, e)), trace_updx(n, a, e))
+#define raw_updx_won(n, p, e) trace_updx(n, p, e)
+#define updx_won(n, p, e) (assert(updx_valid(n, p, e)), trace_updx(n, p, e))
+
+static
+err (help_next)(flx a, flx &n, flx &np, bool enq_aborted){
+    for(;;){
+        if(!n)
+            return -1;
+        
+        np = n->p;
+        for(;;){
+            if(np == a){
+                if(help_enq(a, n, np))
+                    break;
+                return 0;
+            }
+            if(changed(&a->n, n))
+                break;
+            if(n.st == COMMIT || (n.st == ADD && (enq_aborted ||
+                                                  flx(a->p).gen != a.gen)))
+                return EARG("n abort %:%:%", a, n, np);
+            assert(np && (np.st != COMMIT));
+
+            updx_won(flx(a, RDY, np.gen + n.nil), &n->p, np);
+        }
+
+    }
+}
+
+static
+err (help_prev)(flx a, flx &p, flx &pn){
+    for(;;){
+        if(!pn)
+            goto newp;
+        for(;;){
+        readp:
+            if(changed(&a->p, p))
+                break;
+            if(pn != a)
+                return EARG("p abort %:%:%", a, p, pn);
+        newpn:
+            if(pn.st != COMMIT)
+                return 0;
+
+        readpp:;
+            flx pp = p->p;
+        newpp:;
+            if(!pp || pp.st == COMMIT)
+                goto readp;
+
+            flx ppn = pp->n;
+            for(;;){
+                if(changed(&p->p, pp))
+                    goto newpp;
+                if(ppn == a){
+                    if(!updx_won(flx(pp, RDY, p.gen + a.nil), &a->p, p))
+                        goto newp;
+                    pn = ppn;
+                    goto newpn;
+                }
+                if(ppn != p)
+                    goto readpp;
+                if(!updx_won(flx(a,
+                                ppn.st == COMMIT ? RDY : COMMIT,
+                                pn.gen + 1),
+                            &p->n, pn))
+                    break;
+                if(pn.st != COMMIT)
+                    return 0;
+
+                updx_won(flx(a, ppn.st, ppn.gen + 1), &pp->n, ppn);
+            }
+        }
+    newp:;
+        if(!a.nil && (p.st == COMMIT || p.gen != a.gen))
+            return EARG("Gen p abort %:%", a, p);
+
+        pn = p->n;
+    }
+}
 
 err (lflist_del)(flref a, type *t){
     return (lflist_del_upd)(a.gen, a, t);
@@ -148,85 +225,7 @@ done:
 }
 
 static
-err (help_next)(flx a, flx& n, flx& np, bool enq_aborted){
-    for(;;){
-        if(!n)
-            return -1;
-        
-        np = n->p;
-        for(;;){
-            if(np == a){
-                if(help_enq(a, n, np))
-                    break;
-                return 0;
-            }
-            if(changed(&a->n, n))
-                break;
-            if(n.st == COMMIT || (n.st == ADD && (enq_aborted ||
-                                                  flx(a->p).gen != a.gen)))
-                return EARG("n abort %:%:%", a, n, np);
-            assert(np && (np.st != COMMIT));
-
-            updx_won(flx(a, RDY, np.gen + n.nil), &n->p, np);
-        }
-
-    }
-}
-
-static
-err (help_prev)(flx a, flx& p, flx& pn){
-    for(;;){
-        if(!pn)
-            goto newp;
-        for(;;){
-        readp:
-            if(changed(&a->p, p))
-                break;
-            if(pn != a)
-                return EARG("p abort %:%:%", a, p, pn);
-        newpn:
-            if(pn.st != COMMIT)
-                return 0;
-
-        readpp:;
-            flx pp = p->p;
-        newpp:;
-            if(!pp || pp.st == COMMIT)
-                goto readp;
-
-            flx ppn = pp->n;
-            for(;;){
-                if(changed(&p->p, pp))
-                    goto newpp;
-                if(ppn == a){
-                    if(!updx_won(flx(pp, RDY, p.gen + a.nil), &a->p, p))
-                        goto newp;
-                    pn = ppn;
-                    goto newpn;
-                }
-                if(ppn != p)
-                    goto readpp;
-                if(!updx_won(flx(a,
-                                ppn.st == COMMIT ? RDY : COMMIT,
-                                pn.gen + 1),
-                            &p->n, pn))
-                    break;
-                if(pn.st != COMMIT)
-                    return 0;
-
-                updx_won(flx(a, ppn.st, ppn.gen + 1), &pp->n, ppn);
-            }
-        }
-    newp:;
-        if(!a.nil && (p.st == COMMIT || p.gen != a.gen))
-            return EARG("Gen p abort %:%", a, p);
-
-        pn = p->n;
-    }
-}
-
-static
-err help_enq(flx a, flx& n, flx& np){
+err help_enq(flx a, flx &n, flx &np){
     if((np.st != ADD && np.st != ABORT)
        || n.st != RDY)
         return 0;
@@ -246,7 +245,7 @@ err help_enq(flx a, flx& n, flx& np){
 }
 
 static
-err abort_enq(flx a, flx& p, flx& pn){
+err abort_enq(flx a, flx &p, flx &pn){
     bool abort_on_pn_change = false;
     for(;;){
         if(p.st == COMMIT || p.gen != a.gen)
@@ -298,11 +297,10 @@ err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
 
     bool won = false;
     for(;;){
-        if(help_prev(nil, nilp, nilpn)){
+        while(help_prev(nil, nilp, nilpn)){
             assert(nilpn != nil);
             updx_won(flx(nilpn, RDY, nilp.gen + 1), &nil->p, nilp);
             nilpn = (flx){};
-            continue;
         }
 
         if(!raw_updx_won(flx(nilp, ADD, ng), &a->p, p))
@@ -317,6 +315,7 @@ err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
             break;
     }
 
+    /*  */
     updx_won(flx(a, RDY, nilp.gen + 1), &nil->p, nilp);
 
     return 0;
@@ -345,7 +344,7 @@ bool updx_valid(flx n, atomic<flx>* a, flx e){
     return true;
 }
 
-static inline constexpr
+static constexpr
 const char *flststr(flst s){
     return (const char *[]){"COMMIT", "RDY", "ADD", "ABORT"}[s];
 }
@@ -432,7 +431,7 @@ bool flanc_valid(flanchor *_a){
 
            || (pn != a && np == a
                && (1
-                   /* Incomplete del(a) wrote p->n = n. */
+                   /* In-flight del(a) wrote p->n = n. */
                    && pn == n
                    && n.st == COMMIT
                    && n.st == COMMIT
@@ -444,7 +443,7 @@ bool flanc_valid(flanchor *_a){
                && p.st != COMMIT
                && (0
 
-                   /* Incomplete enq(a) wrote p->n = a. */
+                   /* In-flight enq(a) wrote p->n = a. */
                    || (1
                        && np == p
                        && n.nil
@@ -452,7 +451,7 @@ bool flanc_valid(flanchor *_a){
                        && (p.st == ADD || p.st == ABORT)
                        && pn.st == RDY)
 
-                   /* Incomplete del(np) wrote a->n = np->n. */
+                   /* In-flight del(np) wrote a->n = np->n. */
                    || (1
                        && np->p == a
                        && np->n == n
@@ -471,7 +470,7 @@ bool flanc_valid(flanchor *_a){
                    /* Almost-complete del(a) wrote n->p = p. */
                    || n.st == COMMIT
 
-                   /* Incomplete enq(a) wrote a->p = p. */
+                   /* In-flight enq(a) wrote a->p = p. */
                    || (p.st == ADD || p.st == ABORT)
                    )
                )
