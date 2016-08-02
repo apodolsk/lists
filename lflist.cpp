@@ -47,45 +47,45 @@ static err help_prev(flx a, flx& p, flx& pn);
 static err help_enq(flx a, flx& n, flx& np);
 static err abort_enq(flx a, flx& p, flx& pn);
 
-static bool updx_valid(flx n, atomic<flx>* a, flx& e);
-static void report_updx_won(const char *f, int l, flx n, atomic<flx>* a, flx& e);
+static bool updx_valid(flx n, atomic<flx>* a, flx e);
+static void report_updx_won(flx n, atomic<flx>* a, flx e,
+                            const char *func, int line);
 
-#include <cstring>
-template<class T>
-bool eq2(T a, T b){
+bool truly_eq(flx a, flx b){
     return !memcmp(&a, &b, sizeof(dptr));
 }
+
 static
 bool eq_upd(atomic<flx> *a, flx& b){
     flx old = b;
     b = *a;
-    return eq2(b, old);
-}
-    
-#define raw_updx_won(as...) raw_updx_won(__func__, __LINE__, as)
-static
-bool (raw_updx_won)(const char *f, int l, flx n, atomic<flx>* a, flx& e){
-    if(a->compare_exchange_strong(e, n)){
-        report_updx_won(f, l, n, a, e);
-        e = n;
-        return true;
-    }
-    return false;
+    return truly_eq(b, old);
 }
 
-#define updx_won(as...) updx_won(__func__, __LINE__, as)
 static
-bool (updx_won)(const char *f, int l, flx n, atomic<flx> *a, flx& e){
-    assert(updx_valid(n, a, e));
-    return (raw_updx_won)(f, l, n, a, e);
+bool updx_won(flx n, atomic<flx>* a, flx& e){
+    bool won = a->compare_exchange_strong(e, n);
+    if(won)
+        e = n;
+    return won;
 }
+
+#define trace_updx(n, a, e) ({                                      \
+            flx _old = e;                                           \
+            bool _won = (updx_won)(n, a, e);                        \
+            if(_won)                                                \
+                report_updx_won(n, a, _old, __func__, __LINE__);    \
+            _won;                                                   \
+        })
+#define raw_updx_won(n, a, e) trace_updx(n, a, e)
+#define updx_won(n, a, e) (assert(updx_valid(n, a, e)), trace_updx(n, a, e))
 
 err (lflist_del)(flref a, type *t){
     return (lflist_del_upd)(a.gen, a, t);
 }
 
 err (lflist_jam)(flref a, type *t){
-    return lflist_del_upd(a.gen + 1, a, t);
+    return (lflist_del_upd)(a.gen + 1, a, t);
 }
 
 flat
@@ -296,7 +296,6 @@ err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
         if(!raw_updx_won(flx(nilp, ADD, ng), &a->p, p))
             return -!won;
 
-        /* TODO: avoid gen updates? */
         while(!won && !updx_won(flx(nil, ADD, n.gen + 1), &a->n, n))
             if(n.st != COMMIT || !eq_upd(&a->p, p))
                 return 0;
@@ -327,8 +326,8 @@ flref (lflist_unenq)(type *t, lflist *l){
 }
 
 static
-bool updx_valid(flx n, atomic<flx>* a, flx& e){
-    assert(!eq2(n, e));
+bool updx_valid(flx n, atomic<flx>* a, flx e){
+    assert(!truly_eq(n, e));
     assert(n || n.st == COMMIT);
     assert(n.nil || n != cof_aligned_pow2(a, flanchor));
     return true;
@@ -339,11 +338,11 @@ const char *flststr(flst s){
     return (const char *[]){"COMMIT", "RDY", "ADD", "ABORT"}[s];
 }
 static 
-void report_updx_won(const char *f, int l, flx n, atomic<flx>* a, flx& e){
+void report_updx_won(flx n, atomic<flx>* a, flx e, const char *f, int l){
     /* printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
-    /*              get_dbg_id(), */
-    /*              f, l, a, */
-    /*              (volatile flanchor *) e, e.nil, flststr(e.st), e.gen, */
+    /*        get_dbg_id(), */
+    /*        f, l, a, */
+    /*        (volatile flanchor *) e, e.nil, flststr(e.st), e.gen, */
     /*        (volatile flanchor *) n, n.nil, flststr(n.st), n.gen); */
     assert(flanc_valid(cof_aligned_pow2(a, flanchor)), 1);
 }
@@ -367,6 +366,10 @@ bool flanc_valid(flanchor *_a){
         operator owned_flanchor*() const{
             return (owned_flanchor *)(uptr)(pt << 3);
         };
+        operator flx() const{
+            return *(flx *)this;;
+        };
+        
         owned_flanchor* operator->() const{
             return *this;
         };
@@ -461,8 +464,8 @@ bool flanc_valid(flanchor *_a){
     }
 done:
     /* Sniff out unpaused universe or reordering weirdness. */
-    assert(eq2(a->p, p));
-    assert(eq2(a->n, n));
+    assert(truly_eq(a->p, p));
+    assert(truly_eq(a->n, n));
 
     resume_universe();
     return true;

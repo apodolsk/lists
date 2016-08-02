@@ -39,7 +39,7 @@ typedef volatile struct flanchor flanchor;
 struct flanchor{
     flx n;
     flx p;
-} align(2 * sizeof(dptr));
+}align(2 * sizeof(dptr));
 #define FLANCHOR(list){                                                 \
         .n.constexp = (list)                                            \
                       ? 5 + (uptr) (list)                               \
