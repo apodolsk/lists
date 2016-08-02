@@ -41,6 +41,16 @@ using namespace std;
    for it, but it'd also be an optimization.
 */
 
+
+/* NB: non-const references are intentional. Functions taking such may
+   read memory to return up-to-date values of the referenced variables
+   which "track" that memory.  */
+
+static bool truly_eq(flx a, flx b);
+static bool changed(atomic<flx> *src, flx& read);
+
+static bool updx_won(flx n, atomic<flx>* a, flx& e);
+
 static err help_next(flx a, flx& n, flx& np, bool enq_aborted);
 static err help_prev(flx a, flx& p, flx& pn);
 
@@ -51,15 +61,16 @@ static bool updx_valid(flx n, atomic<flx>* a, flx e);
 static void report_updx_won(flx n, atomic<flx>* a, flx e,
                             const char *func, int line);
 
+static
 bool truly_eq(flx a, flx b){
     return !memcmp(&a, &b, sizeof(dptr));
 }
 
 static
-bool eq_upd(atomic<flx> *a, flx& b){
-    flx old = b;
-    b = *a;
-    return truly_eq(b, old);
+bool changed(atomic<flx> *src, flx& read){
+    flx old = read;
+    read = *src;
+    return !truly_eq(read, old);
 }
 
 static
@@ -106,7 +117,7 @@ err (lflist_del_upd)(uptr ng, flref a, type *t){
         if(help_prev(a, p, pn)){
             if(p.st == COMMIT || a.gen != p.gen)
                 goto done;
-            if(!eq_upd(&a->n, n))
+            if(changed(&a->n, n))
                 continue;
             assert(n.st == COMMIT);
             break;
@@ -148,7 +159,7 @@ err (help_next)(flx a, flx& n, flx& np, bool enq_aborted){
                     break;
                 return 0;
             }
-            if(!eq_upd(&a->n, n))
+            if(changed(&a->n, n))
                 break;
             if(n.st == COMMIT || (n.st == ADD && (enq_aborted ||
                                                   flx(a->p).gen != a.gen)))
@@ -168,7 +179,7 @@ err (help_prev)(flx a, flx& p, flx& pn){
             goto newp;
         for(;;){
         readp:
-            if(!eq_upd(&a->p, p))
+            if(changed(&a->p, p))
                 break;
             if(pn != a)
                 return EARG("p abort %:%:%", a, p, pn);
@@ -184,7 +195,7 @@ err (help_prev)(flx a, flx& p, flx& pn){
 
             flx ppn = pp->n;
             for(;;){
-                if(!eq_upd(&p->p, pp))
+                if(changed(&p->p, pp))
                     goto newpp;
                 if(ppn == a){
                     if(!updx_won(flx(pp, RDY, p.gen + a.nil), &a->p, p))
@@ -227,7 +238,7 @@ err help_enq(flx a, flx& n, flx& np){
     flx nnp = nn->p;
     if(nnp != a)
         return 0;
-    if(!eq_upd(&a->n, n))
+    if(changed(&a->n, n))
         return -1;
     updx_won(flx(n, RDY, nnp.gen + 1), &nn->p, nnp);
     return 0;
@@ -251,7 +262,7 @@ err abort_enq(flx a, flx& p, flx& pn){
                 if(!updx_won(rup(p, .st = ABORT), &a->p, p))
                     break;
             }else{
-                if(!eq_upd(&a->p, p))
+                if(changed(&a->p, p))
                     break;
                 abort_on_pn_change = true;
             }
@@ -297,7 +308,7 @@ err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
             return -!won;
 
         while(!won && !updx_won(flx(nil, ADD, n.gen + 1), &a->n, n))
-            if(n.st != COMMIT || !eq_upd(&a->p, p))
+            if(n.st != COMMIT || changed(&a->p, p))
                 return 0;
         won = true;
 
@@ -317,11 +328,11 @@ flref (lflist_unenq)(type *t, lflist *l){
         if(p.nil)
             return (flref){};
         flref r(p);
-        if(!eq_upd(&nil->p, p))
+        if(changed(&nil->p, p))
             continue;
         if(!lflist_del(r, t))
             return fake_linref_up(), r;
-        must(!eq_upd(&nil->p, p));
+        must(changed(&nil->p, p));
     }
 }
 
@@ -435,32 +446,71 @@ bool flanc_valid(flanchor *_a){
         goto done;
     }
 
-    if(n.st == COMMIT){
-        if(nn && (pn == a))
-            assert(nn->p != a);
-    }
-    if(n.st == ADD)
-        assert(n.nil);
-    assert(np == a
-           || pn != a
-           || ((p.st == ADD || p.st == ABORT) &&
-               n.st == ADD &&
-               n.nil)
-           || (np->p == a &&
-               np->n.st == COMMIT &&
-               np->p.st != COMMIT &&
-               n.st == RDY));
-    assert(pn == a
-           || n.st == COMMIT
-           || (p.st == COMMIT && n.st == ADD)
-           || ((p.st == ADD || p.st == ABORT) &&
-               n.st == ADD &&
-               n.nil &&
-               np != a));
-    if(pn == a)
-        assert(p.st != COMMIT);
-    if(np == a && p.st != COMMIT && n.st != COMMIT)
-        assert(pn == a);
+    assert((pn == a && np == a && p.st != COMMIT)
+           
+           || (pn == a && np != a
+               && (
+
+                   (p.st == ADD &&
+                    n.st == ADD)
+
+                   || (p.st == ABORT &&
+                       n.st == ADD)
+
+                   || (n.st == COMMIT &&
+                       p.st != COMMIT &&
+                       np == p)
+
+                   || (n.nil &&
+                       np->p == a &&
+                       (np->p.st == ADD || np->p.st == ABORT) &&
+                       n.st == RDY &&
+                       p.st != COMMIT)
+                   )
+               )
+
+           || (pn != a && np != a
+               && n.st != RDY
+               && (
+                   
+                   (p.st == COMMIT && n.st == COMMIT)
+
+                   || (n.st == COMMIT)
+
+                   || (p.st == ADD || p.st == ABORT)
+                   )
+               )
+        );
+            
+
+
+    /* if(n.st == COMMIT){ */
+    /*     if(nn && (pn == a)) */
+    /*         assert(nn->p != a); */
+    /* } */
+    /* if(n.st == ADD) */
+    /*     assert(n.nil); */
+    /* assert(np == a */
+    /*        || pn != a */
+    /*        || ((p.st == ADD || p.st == ABORT) && */
+    /*            n.st == ADD && */
+    /*            n.nil) */
+    /*        || (np->p == a && */
+    /*            np->n.st == COMMIT && */
+    /*            np->p.st != COMMIT && */
+    /*            n.st == RDY)); */
+    /* assert(pn == a */
+    /*        || n.st == COMMIT */
+    /*        || (p.st == COMMIT && n.st == ADD) */
+    /*        || ((p.st == ADD || p.st == ABORT) && */
+    /*            n.st == ADD && */
+    /*            n.nil && */
+    /*            np != a)); */
+    /* if(pn == a) */
+    /*     assert(p.st != COMMIT); */
+    /* if(np == a && p.st != COMMIT && n.st != COMMIT) */
+    /*     assert(pn == a); */
+    /* } */
     }
 done:
     /* Sniff out unpaused universe or reordering weirdness. */
