@@ -20,9 +20,10 @@ struct flref{
 };
 
 extern "C"{
-/* This version of lflist just assumes type stability. */
     struct type;
+    /* This version of lflist just assumes type stability. */
     void fake_linref_up(void);
+
 
     /* If !ret:
        - For all flref b | b == a, the next lflist_del_upd(_, b, t) will

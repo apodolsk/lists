@@ -42,9 +42,9 @@ using namespace std;
 */
 
 
-/* NB: non-const references are intentional. Functions taking such may
-   read memory to return up-to-date values of the referenced variables
-   which "track" that memory.  */
+/* Non-const references are intentional. Functions reading memory "return"
+   up-to-date values of the referenced variables "tracking" that memory.
+*/
 
 static bool truly_eq(flx a, flx b);
 static bool changed(atomic<flx> *src, flx& read);
@@ -61,6 +61,7 @@ static bool updx_valid(flx n, atomic<flx>* a, flx e);
 static void report_updx_won(flx n, atomic<flx>* a, flx e,
                             const char *func, int line);
 
+/* As noted, == on flx compares only flx::pt. */
 static
 bool truly_eq(flx a, flx b){
     return !memcmp(&a, &b, sizeof(dptr));
@@ -366,59 +367,32 @@ bool flanc_valid(flanchor *_a){
     
     /* Here comes something nasty. atomic<flx> disallows direct member
        access, as in "n->p.st". It's suuuper inconvenient here. */
-    struct owned_flanchor;
-    struct owned_flx{
-        flst st:2;
-        uptr nil:1;
-        uptr pt:WORDBITS-3;
-    
-        uptr gen;
-
-        operator owned_flanchor*() const{
-            return (owned_flanchor *)(uptr)(pt << 3);
+    struct flanchor_na;
+    struct flx_na : flx{
+        explicit operator flanchor*();
+        operator flanchor_na*() const{
+            return (flanchor_na *)(uptr)(pt << 3);
         };
-        operator flx() const{
-            return *(flx *)this;;
-        };
-        
-        owned_flanchor* operator->() const{
+        flanchor_na* operator->() const{
             return *this;
         };
     };
-
-    struct owned_flanchor{
-        owned_flx n;
-        owned_flx p;
+    struct flanchor_na{
+        flx_na n;
+        flx_na p;
     };
 
-    owned_flanchor *a = (owned_flanchor *) _a;
+    flanchor_na *a = (flanchor_na *) _a;
     
-    dbg owned_flx
+    dbg flx_na
         p = a->p,
         n = a->n;
 
-    if(!p){
-        assert(p.st == COMMIT);
-        assert(n.st == COMMIT || n.st == ADD);
-        if(n)
-            assert(n->p != a);
-
-        goto done;
-    }
-
-    if(!n){
-        assert(n.st == COMMIT);
-        if(p)
-            assert(p->n != a);
-        goto done;
-    }
-    {
-
-    dbg owned_flx
-        pn = p->n,
-        pp = p->p,
-        np = n->p,
-        nn = n->n;
+    dbg flx_na
+        pn = p ? p->n : (flx_na){},
+        pp = p ? p->p : (flx_na){},
+        np = n ? n->p : (flx_na){},
+        nn = n ? n->n : (flx_na){};
 
     bool nil = false;
     if(np == a)
@@ -426,40 +400,47 @@ bool flanc_valid(flanchor *_a){
     else if(np && np->p == a)
         nil = np->p.nil;
 
-    assert(n != p || n.nil || nil || (p.st == ADD || p.st == ABORT));
+    assert(n != p
+           || n.nil
+           || nil
+           || (p.st == ADD || p.st == ABORT));
 
     if(nil){
         assert(p.st == RDY && n.st == RDY);
         assert((np == a && np.nil)
-               || (np->p == a &&
-                   np->p.st != COMMIT &&
-                   np->n == n &&
-                   np->n.st == COMMIT));
-        dbg owned_flx pnn = pn->n;
-        dbg owned_flx pnp = pn->p;
+               || (1
+                   && np->p == a
+                   && np->p.st != COMMIT
+                   && np->n == n
+                   && np->n.st == COMMIT));
         assert((pn == a && pn.nil)
-               || (pnn == a &&
-                   pnn.nil &&
-                   pnn.st == ADD &&
-                   (pnp.st == ADD || pnp.st == ABORT) &&
-                   pnp == p));
+               || (1
+                   && pn->n == a
+                   && pn->n.nil
+                   && pn->n.st == ADD
+                   && (pn->p.st == ADD || pn->p.st == ABORT)
+                   && pn->p == p));
         goto done;
     }
+
+    if(n.st == COMMIT && np == a)
+        assert(nn->p != a);
 
     assert(0
            || (pn == a && np == a
                && p.st != COMMIT)
 
            || (pn != a && np == a
-               && n.st == COMMIT
                && (1
                    /* Incomplete del(a) wrote p->n = n. */
                    && pn == n
+                   && n.st == COMMIT
                    && n.st == COMMIT
                    && p.st != COMMIT
                    && pn.st != COMMIT))
            
            || (pn == a && np != a
+               && n.st != COMMIT
                && p.st != COMMIT
                && (0
 
@@ -495,37 +476,6 @@ bool flanc_valid(flanchor *_a){
                    )
                )
         );
-            
-
-
-    /* if(n.st == COMMIT){ */
-    /*     if(nn && (pn == a)) */
-    /*         assert(nn->p != a); */
-    /* } */
-    /* if(n.st == ADD) */
-    /*     assert(n.nil); */
-    /* assert(np == a */
-    /*        || pn != a */
-    /*        || ((p.st == ADD || p.st == ABORT) && */
-    /*            n.st == ADD && */
-    /*            n.nil) */
-    /*        || (np->p == a && */
-    /*            np->n.st == COMMIT && */
-    /*            np->p.st != COMMIT && */
-    /*            n.st == RDY)); */
-    /* assert(pn == a */
-    /*        || n.st == COMMIT */
-    /*        || (p.st == COMMIT && n.st == ADD) */
-    /*        || ((p.st == ADD || p.st == ABORT) && */
-    /*            n.st == ADD && */
-    /*            n.nil && */
-    /*            np != a)); */
-    /* if(pn == a) */
-    /*     assert(p.st != COMMIT); */
-    /* if(np == a && p.st != COMMIT && n.st != COMMIT) */
-    /*     assert(pn == a); */
-    /* } */
-    }
 done:
     /* Sniff out unpaused universe or reordering weirdness. */
     assert(truly_eq(a->p, p));
