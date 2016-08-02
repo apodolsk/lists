@@ -46,9 +46,9 @@ using namespace std;
 */
 
 static bool truly_eq(flx a, flx b);
-static bool changed(atomic<flx> *src, flx &read);
+static bool changed(half_atomic_flx *src, flx &read);
 
-static bool updx_won(flx write, atomic<flx> *a, flx &expect);
+static bool updx_won(flx write, half_atomic_flx *a, flx &expect);
 
 static err help_next(flx a, flx &n, flx &np, bool enq_aborted);
 static err help_prev(flx a, flx &p, flx &pn);
@@ -56,8 +56,8 @@ static err help_prev(flx a, flx &p, flx &pn);
 static err help_enq(flx a, flx &n, flx &np);
 static err abort_enq(flx a, flx &p, flx &pn);
 
-static bool updx_valid(flx n, atomic<flx> *p, flx e);
-static void report_updx_won(flx n, atomic<flx> *p, flx e,
+static bool updx_valid(flx n, half_atomic_flx *p, flx e);
+static void report_updx_won(flx n, half_atomic_flx *p, flx e,
                             const char *func, int line);
 
 /* == on flx compares only flx::pt. */
@@ -67,14 +67,14 @@ bool truly_eq(flx a, flx b){
 }
 
 static
-bool changed(atomic<flx> *p, flx &read){
+bool changed(half_atomic_flx *p, flx &read){
     flx old = read;
     read = *p;
     return !truly_eq(read, old);
 }
 
 static
-bool updx_won(flx n, atomic<flx> *p, flx &e){
+bool updx_won(flx n, half_atomic_flx *p, flx &e){
     bool won = p->compare_exchange_strong(e, n);
     if(won)
         e = n;
@@ -337,9 +337,10 @@ flref (lflist_unenq)(type *t, lflist *l){
 }
 
 static
-bool updx_valid(flx n, atomic<flx>* a, flx e){
+bool updx_valid(flx n, half_atomic_flx* a, flx e){
     assert(!truly_eq(n, e));
     assert(n || n.st == COMMIT);
+    assert(aligned_pow2((flanchor *) n, alignof(flanchor)));
     assert(n.nil || n != cof_aligned_pow2(a, flanchor));
     return true;
 }
@@ -349,7 +350,7 @@ const char *flststr(flst s){
     return (const char *[]){"COMMIT", "RDY", "ADD", "ABORT"}[s];
 }
 static 
-void report_updx_won(flx n, atomic<flx>* a, flx e, const char *f, int l){
+void report_updx_won(flx n, half_atomic_flx* a, flx e, const char *f, int l){
     /* printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
     /*        get_dbg_id(), */
     /*        f, l, a, */
@@ -364,7 +365,7 @@ bool flanc_valid(flanchor *_a){
     if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
         return false;
     
-    /* Here comes something nasty. atomic<flx> disallows direct member
+    /* Here comes something nasty. half_atomic_flx disallows direct member
        access, as in "n->p.st". It's suuuper inconvenient here. */
     struct flanchor_na;
     struct flx_na : flx{

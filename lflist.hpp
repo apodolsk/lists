@@ -6,7 +6,7 @@ struct flref{
     uptr gen;
 
     flref() = default;
-    flref(flanchor *a);
+    explicit flref(flanchor *a);
 
     inline
     operator flanchor*() const{
@@ -111,17 +111,17 @@ struct flx{
    0, 0). I redefine load to make non-atomic reads, which suffice. I wrap
    CAS to randomly yield() in DBG mode. */
 class half_atomic_flx : public std::atomic<flx>{
-    inline
+public:
     bool compare_exchange_strong(flx& expected, flx desired,
                                 std::memory_order order = std::memory_order_seq_cst)
     {
         fuzz_atomics();
+        assert(0);
         return atomic<flx>::compare_exchange_strong(expected, desired, order);
     }
         
-    
-    inline
-    flx load(std::memory_order order = std::memory_order_seq_cst) const{
+    flx load(std::memory_order order = std::memory_order_seq_cst) const noexcept{
+        assert(0);
         typedef aliasing uptr auptr;
         flx r;
         ((auptr *) &r)[0] = ((volatile auptr *) this)[0];
@@ -149,17 +149,20 @@ flref::flref(flanchor *a):
 
 inline
 flx::flx(lflist *l):
-    st(),
+    st(COMMIT),
     nil(1),
     pt(to_pt(&l->nil)),
-    gen()
+    gen(0)
 {}
 
 inline
 flx::flx(flref r):
-    st(),
-    nil(),
+    st(COMMIT),
+    nil(0),
     pt(to_pt(r.ptr)),
     gen(r.gen)
 {}
 
+CASSERT(std::is_trivially_copyable<flref>());
+CASSERT(std::is_trivially_copyable<flanchor>());
+CASSERT(std::is_trivially_copyable<lflist>());
