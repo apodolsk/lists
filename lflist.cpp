@@ -446,37 +446,51 @@ bool flanc_valid(flanchor *_a){
         goto done;
     }
 
-    assert((pn == a && np == a && p.st != COMMIT)
+    assert(0
+           || (pn == a && np == a
+               && p.st != COMMIT)
+
+           || (pn != a && np == a
+               && n.st == COMMIT
+               && (1
+                   /* Incomplete del(a) wrote p->n = n. */
+                   && pn == n
+                   && n.st == COMMIT
+                   && p.st != COMMIT
+                   && pn.st != COMMIT))
            
            || (pn == a && np != a
-               && (
+               && p.st != COMMIT
+               && (0
 
-                   (p.st == ADD &&
-                    n.st == ADD)
+                   /* Incomplete enq(a) wrote p->n = a. */
+                   || (1
+                       && np == p
+                       && n.nil
+                       && n.st == ADD
+                       && (p.st == ADD || p.st == ABORT)
+                       && pn.st == RDY)
 
-                   || (p.st == ABORT &&
-                       n.st == ADD)
-
-                   || (n.st == COMMIT &&
-                       p.st != COMMIT &&
-                       np == p)
-
-                   || (n.nil &&
-                       np->p == a &&
-                       (np->p.st == ADD || np->p.st == ABORT) &&
-                       n.st == RDY &&
-                       p.st != COMMIT)
+                   /* Incomplete del(np) wrote a->n = np->n. */
+                   || (1
+                       && np->p == a
+                       && np->n == n
+                       && np->n.st == COMMIT
+                       && np->p.st != COMMIT
+                       && n.st == RDY)
                    )
                )
 
            || (pn != a && np != a
                && n.st != RDY
-               && (
+               && (0
+                   /* del(a) completed */
+                   || p.st == COMMIT
                    
-                   (p.st == COMMIT && n.st == COMMIT)
+                   /* Almost-complete del(a) wrote n->p = p. */
+                   || n.st == COMMIT
 
-                   || (n.st == COMMIT)
-
+                   /* Incomplete enq(a) wrote a->p = p. */
                    || (p.st == ADD || p.st == ABORT)
                    )
                )
