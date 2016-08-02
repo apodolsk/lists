@@ -110,18 +110,26 @@ struct flx{
 /* The lack of a 16B MOV on x86 forces atomic<flx>::load to use CAS2(this,
    0, 0). I redefine load to make non-atomic reads, which suffice. I wrap
    CAS to randomly yield() in DBG mode. */
-class half_atomic_flx : public std::atomic<flx>{
+class half_atomic_flx : private std::atomic<flx>{
 public:
+    
+    operator flx() const{
+        return load();
+    }
+    inline flat
     bool compare_exchange_strong(flx& expected, flx desired,
                                 std::memory_order order = std::memory_order_seq_cst)
     {
         fuzz_atomics();
-        assert(0);
+        /* return __atomic_compare_exchange(this, */
+        /*                                  reinterpret_cast<half_atomic_flx *> */
+        /*                                  (&expected), */
+        /*                                  reinterpret_cast<half_atomic_flx *>(&desired), */
+        /*                                  0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); */
         return atomic<flx>::compare_exchange_strong(expected, desired, order);
     }
-        
-    flx load(std::memory_order order = std::memory_order_seq_cst) const noexcept{
-        assert(0);
+    inline 
+    flx load(std::memory_order order = std::memory_order_seq_cst) const{
         typedef aliasing uptr auptr;
         flx r;
         ((auptr *) &r)[0] = ((volatile auptr *) this)[0];
@@ -130,6 +138,7 @@ public:
         return r;
     }
 };
+CASSERT(std::atomic<flx>::is_always_lock_free());
 
 struct flanchor{
     half_atomic_flx n;
