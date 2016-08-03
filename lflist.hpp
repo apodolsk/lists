@@ -105,40 +105,24 @@ struct flx{
     flanchor* operator->() const{
         return *this;
     }
-};
+}align(sizeof(dptr));
 
 /* The lack of a 16B MOV on x86 forces atomic<flx>::load to use CAS2(this,
    0, 0). I redefine load to make non-atomic reads, which suffice. I wrap
    CAS to randomly yield() in DBG mode. */
 class half_atomic_flx : private std::atomic<flx>{
 public:
-    
+    inline 
     operator flx() const{
         return load();
     }
-    inline flat
-    bool compare_exchange_strong(flx& expected, flx desired,
-                                std::memory_order order = std::memory_order_seq_cst)
-    {
-        fuzz_atomics();
-        /* return __atomic_compare_exchange(this, */
-        /*                                  reinterpret_cast<half_atomic_flx *> */
-        /*                                  (&expected), */
-        /*                                  reinterpret_cast<half_atomic_flx *>(&desired), */
-        /*                                  0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); */
-        return atomic<flx>::compare_exchange_strong(expected, desired, order);
-    }
-    inline 
-    flx load(std::memory_order order = std::memory_order_seq_cst) const{
-        typedef aliasing uptr auptr;
-        flx r;
-        ((auptr *) &r)[0] = ((volatile auptr *) this)[0];
-        fuzz_atomics();
-        ((auptr *) &r)[1] = ((volatile auptr *) this)[1];
-        return r;
-    }
+
+    bool compare_exchange_strong(flx& expected,
+                                 flx desired,
+                                 std::memory_order order
+                                 = std::memory_order_seq_cst);
+    flx load(std::memory_order order = std::memory_order_seq_cst) const;
 };
-CASSERT(std::atomic<flx>::is_always_lock_free());
 
 struct flanchor{
     half_atomic_flx n;
@@ -152,7 +136,7 @@ struct lflist{
 #define to_pt(flanc) (((uptr) (flanc)) >> 3)
 
 inline
-flref::flref(flanchor *a):
+flref::flref(align(8) flanchor *a):
     ptr(a),
     gen(flx(a->p).gen){}
 
@@ -168,9 +152,36 @@ inline
 flx::flx(flref r):
     st(COMMIT),
     nil(0),
-    pt(to_pt(r.ptr)),
+    pt(to_pt(__builtin_assume_aligned(r.ptr, 8))),
     gen(r.gen)
 {}
+
+noinline
+bool half_atomic_flx::compare_exchange_strong(
+    flx& expected,
+    flx desired,
+    std::memory_order order)
+{
+    fuzz_atomics();
+    /* return __atomic_compare_exchange((flx *) this, */
+    /*                                  &expected, */
+    /*                                  &desired, */
+    /*                                  0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); */
+    return atomic<flx>::compare_exchange_strong(expected, desired, order);
+}
+
+inline 
+flx half_atomic_flx::load(std::memory_order order)
+    const
+{
+    typedef aliasing uptr auptr;
+    flx r;
+    ((auptr *) &r)[0] = ((volatile auptr *) this)[0];
+    fuzz_atomics();
+    ((auptr *) &r)[1] = ((volatile auptr *) this)[1];
+    return r;
+}
+
 
 CASSERT(std::is_trivially_copyable<flref>());
 CASSERT(std::is_trivially_copyable<flanchor>());

@@ -61,19 +61,23 @@ static void report_updx_won(flx n, half_atomic_flx *p, flx e,
                             const char *func, int line);
 
 /* == on flx compares only flx::pt. */
-static
+static inline
 bool truly_eq(flx a, flx b){
-    return !memcmp(&a, &b, sizeof(dptr));
+    return a.st == b.st
+           && a.nil == b.nil
+           && a.pt == b.pt
+           && a.gen == b.gen;
+    /* return !memcmp(&a, &b, sizeof(dptr)); */
 }
 
-static
+static inline
 bool changed(half_atomic_flx *p, flx &read){
     flx old = read;
     read = *p;
     return !truly_eq(read, old);
 }
 
-static
+static inline
 bool updx_won(flx n, half_atomic_flx *p, flx &e){
     bool won = p->compare_exchange_strong(e, n);
     if(won)
@@ -126,8 +130,9 @@ err (help_prev)(flx a, flx &p, flx &pn){
         readp:
             if(changed(&a->p, p))
                 break;
-            if(pn != a)
+            if(pn != a){
                 return EARG("p abort %:%:%", a, p, pn);
+            }
         newpn:
             if(pn.st != COMMIT)
                 return 0;
