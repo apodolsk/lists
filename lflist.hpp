@@ -144,7 +144,7 @@ struct lflist{
 #define to_pt(flanc) (((uptr) (flanc)) >> 3)
 
 inline
-flref::flref(align(8) flanchor *a):
+flref::flref(flanchor *align(8) a):
     ptr(a),
     gen(flx(a->p).gen){}
 
