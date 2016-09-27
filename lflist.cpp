@@ -137,7 +137,6 @@ err (help_prev)(flx a, flx &p, flx &pn){
             if(pn.st != COMMIT)
                 return 0;
 
-        readpp:;
             flx pp = p->p;
         newpp:;
             if(!pp || pp.st == COMMIT)
@@ -154,7 +153,7 @@ err (help_prev)(flx a, flx &p, flx &pn){
                     goto newpn;
                 }
                 if(ppn != p)
-                    goto readpp;
+                    goto readp;
                 if(!updx_won(flx(a,
                                 ppn.st == COMMIT ? RDY : COMMIT,
                                 pn.gen + 1),
@@ -320,7 +319,6 @@ err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
             break;
     }
 
-    /*  */
     updx_won(flx(a, RDY, nilp.gen + 1), &nil->p, nilp);
 
     return 0;
@@ -350,17 +348,9 @@ bool updx_valid(flx n, half_atomic_flx* a, flx e){
     return true;
 }
 
-static constexpr
-const char *flststr(flst s){
-    return (const char *[]){"COMMIT", "RDY", "ADD", "ABORT"}[s];
-}
 static 
 void report_updx_won(flx n, half_atomic_flx* a, flx e, const char *f, int l){
-    /* printf("%lu %s:%d- %p({%p:%lu %s, %lu} => {%p:%lu %s, %lu})\n", */
-    /*        get_dbg_id(), */
-    /*        f, l, a, */
-    /*        (volatile flanchor *) e, e.nil, flststr(e.st), e.gen, */
-    /*        (volatile flanchor *) n, n.nil, flststr(n.st), n.gen); */
+    log(1, "%:% - %(% => %)", f, l, (void *) a, e, n);
     assert(flanc_valid(cof_aligned_pow2(a, flanchor)), 1);
 }
 
@@ -369,7 +359,7 @@ void report_updx_won(flx n, half_atomic_flx* a, flx e, const char *f, int l){
 bool flanc_valid(flanchor *_a){
     if(!randpcnt(FLANC_CHECK_FREQ) || pause_universe())
         return false;
-    
+
     /* Here comes something nasty. half_atomic_flx disallows direct member
        access, as in "n->p.st". It's suuuper inconvenient here. */
     struct flanchor_na;
@@ -406,6 +396,7 @@ bool flanc_valid(flanchor *_a){
         nil = np->p.nil;
 
     assert(n != p
+           || !n
            || n.nil
            || nil
            || (p.st == ADD || p.st == ABORT));
@@ -428,7 +419,7 @@ bool flanc_valid(flanchor *_a){
         goto done;
     }
 
-    if(n.st == COMMIT && np == a)
+    if(n.st == COMMIT && np == a && !n.nil)
         assert(nn->p != a);
 
     assert(0

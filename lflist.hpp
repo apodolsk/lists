@@ -21,26 +21,28 @@ struct flref{
 
 extern "C"{
     struct type;
-    /* This version of lflist just assumes type stability. */
+    /* This version of lflist assumes type stability. */
     void fake_linref_up(void);
 
 
     /* If !ret:
-       - For all flref b | b == a, the next lflist_del_upd(_, b, t) will
-         return 0 iff b.gen == ng.
+       - For flref b | b == a:
+         - If b.gen == ng, the next lflist_del_upd(_, b, t) will return 0.
+
 
        Undefined iff:
-       - *a isn't object of type flanchor, or
-       - ng == a.gen. Internal consistency depends on every enq updating
-         "the generation of *a".
+       - *a isn't of type flanchor, or
+       - ng == a.gen. Internal consistency depends on enq updating "the
+         generation of *a".
     */
     err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
     err lflist_enq(flref a, type *t, lflist *l);
 
     /* Iff !ret:
-       - For all flref b | b == a, the next call to either
-         lflist_enq_upd(_, b, t) or lflist_del_upd(ng', b, t) will return
-         0 iff b.gen == ng and, in the latter case, ng' != ng.
+       - For all flref b | b == a, either:
+         - The next lflist_enq_upd(_, b, t) will return 0, or
+         - The next lflist_del_upd(ng', b, t) will return 0 iff b.gen ==
+         ng and, in the latter case, ng' != ng.
 
        Undefined iff:
        - *a may not be an object of type flanchor.
@@ -124,6 +126,12 @@ public:
     flx load(std::memory_order order = std::memory_order_seq_cst) const;
 };
 
+pudef(flx, "{%:% %, %}",
+      (void *)(flanchor *)*a,
+      a->nil,
+      (const char *[]){"COMMIT", "RDY", "ADD", "ABORT"}[a->st],
+      a->gen);
+
 struct flanchor{
     half_atomic_flx n;
     half_atomic_flx p;
@@ -163,10 +171,6 @@ bool half_atomic_flx::compare_exchange_strong(
     std::memory_order order)
 {
     fuzz_atomics();
-    /* return __atomic_compare_exchange((flx *) this, */
-    /*                                  &expected, */
-    /*                                  &desired, */
-    /*                                  0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); */
     return atomic<flx>::compare_exchange_strong(expected, desired, order);
 }
 
