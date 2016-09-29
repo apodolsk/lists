@@ -25,29 +25,9 @@ extern "C"{
     void fake_linref_up(void);
 
 
-    /* If !ret:
-       - For flref b | b == a:
-         - If b.gen == ng, the next lflist_del_upd(_, b, t) will return 0.
-
-
-       Undefined iff:
-       - *a isn't of type flanchor, or
-       - ng == a.gen. Internal consistency depends on enq updating "the
-         generation of *a".
-    */
     err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
     err lflist_enq(flref a, type *t, lflist *l);
-
-    /* Iff !ret:
-       - For all flref b | b == a, either:
-         - The next lflist_enq_upd(_, b, t) will return 0, or
-         - The next lflist_del_upd(ng', b, t) will return 0 iff b.gen ==
-         ng and, in the latter case, ng' != ng.
-
-       Undefined iff:
-       - *a may not be an object of type flanchor.
-      
-     */
+    
     err lflist_del_upd(uptr ng, flref a, type *t);
     err lflist_del(flref a, type *t);
     err lflist_jam(flref a, type *t);

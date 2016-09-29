@@ -6,6 +6,8 @@
 
 using namespace std;
 
+/* Check out lflist.hpp first. */
+
 /* flx::st can mean different things for flanchor::n and flanchor::p. 
 
    A->p.st == COMMIT iff A is enqable. del() and enq() return 0 iff they
@@ -16,10 +18,9 @@ using namespace std;
    A->p.st == ADD iff A->p hasn't been written since the last enq(A). In
    this case, del(A->p) must check whether the enq(A) is incomplete and
    needs helped. 
-   - ADD is an optimization, and could be replaced with RDY. If A->p.st !=
-     ADD, then the check avoid the cost of such a check.
+   - ADD is purely an optimization, and could be replaced with RDY.
    
-   A->p.st == ABORT iff a del(A) tried to abort an enq(A). del() may set
+   A->p.st == ABORT iff a del(A) tried to abort an enq(A). del() may
    "spuriously" set ABORT after an enq(A) finishes, so ABORT is treated
    like RDY outside of enq(A). It's a "harmless" signal to enq(A).
 
@@ -27,14 +28,13 @@ using namespace std;
 
    A->n.st == COMMIT only if a del(A) committed to a "P"->n
    write. del(A->n) takes it as a signal to try and help del(A) before
-   committing to an A->n write.
+   clearing COMMIT and attempting an A->n write.
 
    A->n.st == RDY iff no del(A) is "committed", or every committed del(A)
    is guaranteed to fail. A->pt can only be written when A->n.st ==
    RDY. Implies A->p.st != COMMIT.
 
-   A->n.st == ADD iif A->n hasn't been written since enq(A). Exactly
-   analogous to A->p.st == ADD.
+   A->n.st == ADD iif A->n hasn't been written since enq(A). 
 
    A->n.st == ABORT is currently unused. There's a hypothetical use for
    it, but it's not critical.

@@ -1,7 +1,7 @@
 #pragma once
 
 /* NB: lflist.cpp doesn't actually include this. You're better off reading
-   lflist.cpp. Interface is documented inside the extern "C" block. */
+   lflist.hpp. */
 
 typedef struct{
     volatile struct flanchor *ptr;
