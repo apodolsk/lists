@@ -78,12 +78,12 @@ flref flref_of(flanchor *a){
 flanchor *flptr(flref a);
 flref flref_of(flanchor *a);
 
-err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
+err lflist_enq_cas(uptr ng, flref a, type *t, lflist *l);
 err lflist_enq(flref a, type *t, lflist *l);
 
 flref lflist_unenq(type *t, lflist *l);
 
-err lflist_del_upd(uptr ng, flref a, type *t);
+err lflist_del_cas(uptr ng, flref a, type *t);
 err lflist_del(flref a, type *t);
 err lflist_jam(flref a, type *t);
 
@@ -111,12 +111,12 @@ const char *flstatestr(uptr s){
 #define LOG_LFLISTM 0
 #endif
 
-#define lflist_enq_upd(ng, a, t, l)                                     \
-    linref_account(0, trace(LFLISTM, 2, lflist_enq_upd, PUN(uptr, ng), a, t, l))
+#define lflist_enq_cas(ng, a, t, l)                                     \
+    linref_account(0, trace(LFLISTM, 2, lflist_enq_cas, PUN(uptr, ng), a, t, l))
 
 
-#define lflist_del_upd(ng, a, t)                                        \
-    linref_account(0, trace(LFLISTM, 2, lflist_del_upd, PUN(uptr, ng), a, t))
+#define lflist_del_cas(ng, a, t)                                        \
+    linref_account(0, trace(LFLISTM, 2, lflist_del_cas, PUN(uptr, ng), a, t))
 
 
 #define lflist_del(as...) linref_account(0, trace(LFLISTM, 2, lflist_del, as))

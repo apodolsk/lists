@@ -64,10 +64,10 @@ flx (lflist_unenq)(type *t, lflist *l){
 }
 
 err (lflist_enq)(flx a, type *t, lflist *l){
-    return lflist_enq_upd(a.gen + 1, a, t, l);
+    return lflist_enq_cas(a.gen + 1, a, t, l);
 }
 
-err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
+err (lflist_enq_cas)(uptr ng, flx a, type *t, lflist *l){
     (void) t;
     if(a.ptr->gen != a.gen)
         return -1;
@@ -82,10 +82,10 @@ err (lflist_enq_upd)(uptr ng, flx a, type *t, lflist *l){
 }
 
 err (lflist_jam)(flx a, type *t){
-    return lflist_del_upd(a.gen + 1, a, t);
+    return lflist_del_cas(a.gen + 1, a, t);
 }
 
-err (lflist_del_upd)(uptr ng, flx a, type *t){
+err (lflist_del_cas)(uptr ng, flx a, type *t){
     for(stx ax = a.ptr->stx;;){
         if(ax.gen != a.gen)
             return -1;

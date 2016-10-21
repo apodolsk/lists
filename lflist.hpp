@@ -25,10 +25,10 @@ extern "C"{
     void fake_linref_up(void);
 
 
-    err lflist_enq_upd(uptr ng, flref a, type *t, lflist *l);
+    err lflist_enq_cas(uptr ng, flref a, type *t, lflist *l);
     err lflist_enq(flref a, type *t, lflist *l);
     
-    err lflist_del_upd(uptr ng, flref a, type *t);
+    err lflist_del_cas(uptr ng, flref a, type *t);
     err lflist_del(flref a, type *t);
     err lflist_jam(flref a, type *t);
 
@@ -144,7 +144,7 @@ flx::flx(flref r):
     gen(r.gen)
 {}
 
-noinline
+inline
 bool half_atomic_flx::compare_exchange_strong(
     flx& expected,
     flx desired,

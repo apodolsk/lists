@@ -174,15 +174,15 @@ err (help_prev)(flx a, flx &p, flx &pn){
 }
 
 err (lflist_del)(flref a, type *t){
-    return (lflist_del_upd)(a.gen, a, t);
+    return (lflist_del_cas)(a.gen, a, t);
 }
 
 err (lflist_jam)(flref a, type *t){
-    return (lflist_del_upd)(a.gen + 1, a, t);
+    return (lflist_del_cas)(a.gen + 1, a, t);
 }
 
 flat
-err (lflist_del_upd)(uptr ng, flref a, type *t){
+err (lflist_del_cas)(uptr ng, flref a, type *t){
     flx n = a->n,
         np;
     flx p = a->p,
@@ -284,10 +284,10 @@ err abort_enq(flx a, flx &p, flx &pn){
 }
 
 err (lflist_enq)(flref a, type *t, lflist *l){
-    return lflist_enq_upd(a.gen + 1, a, t, l);
+    return lflist_enq_cas(a.gen + 1, a, t, l);
 }
 
-err (lflist_enq_upd)(uptr ng, flref a, type *t, lflist *l){
+err (lflist_enq_cas)(uptr ng, flref a, type *t, lflist *l){
     assert(ng != a.gen);
     
     flx p = a->p;
