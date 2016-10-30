@@ -49,7 +49,7 @@ err (lflist_del)(flx a, type *t){
     return 0;
 }
 
-flx (lflist_unenq)(type *t, lflist *l){
+flx (lflist_unenq)(lflist *l, type *t){
     lock_lflist(l);
     flx rlx = (flx){};
     flanchor *r = cof(list_deq(&l->l), flanchor, lanc);
@@ -63,11 +63,25 @@ flx (lflist_unenq)(type *t, lflist *l){
     return rlx;
 }
 
-err (lflist_enq)(flx a, type *t, lflist *l){
-    return lflist_enq_cas(a.gen + 1, a, t, l);
+flx (lflist_deq)(lflist *l, type *t){
+    lock_lflist(l);
+    flx rlx = (flx){};
+    flanchor *r = cof(list_deq(&l->l), flanchor, lanc);
+    if(r){
+        rlx = (flx){r, r->gen};
+        assert(r->host == l);
+        r->host = NULL;
+        muste(linref_up(r, t));
+    }
+    unlock_lflist(l);
+    return rlx;
 }
 
-err (lflist_enq_cas)(uptr ng, flx a, type *t, lflist *l){
+err (lflist_enq)(flx a, lflist *l, type *t){
+    return lflist_enq_cas(a.gen + 1, a, l, t);
+}
+
+err (lflist_enq_cas)(uptr ng, flx a, lflist *l, type *t){
     (void) t;
     if(a.ptr->gen != a.gen)
         return -1;

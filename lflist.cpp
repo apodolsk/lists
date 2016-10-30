@@ -283,11 +283,11 @@ err abort_enq(flx a, flx &p, flx &pn){
     }
 }
 
-err (lflist_enq)(flref a, type *t, lflist *l){
-    return lflist_enq_cas(a.gen + 1, a, t, l);
+err (lflist_enq)(flref a, lflist *l, type *t){
+    return lflist_enq_cas(a.gen + 1, a, l, t);
 }
 
-err (lflist_enq_cas)(uptr ng, flref a, type *t, lflist *l){
+err (lflist_enq_cas)(uptr ng, flref a, lflist *l, type *t){
     assert(ng != a.gen);
     
     flx p = a->p;
@@ -324,7 +324,7 @@ err (lflist_enq_cas)(uptr ng, flref a, type *t, lflist *l){
     return 0;
 }
 
-flref (lflist_unenq)(type *t, lflist *l){
+flref (lflist_unenq)(lflist *l, type *t){
     flx nil(l);
     flx p = nil->p;
     for(;;){
@@ -336,6 +336,21 @@ flref (lflist_unenq)(type *t, lflist *l){
         if(!lflist_del(r, t))
             return fake_linref_up(), r;
         must(changed(&nil->p, p));
+    }
+}
+
+flref (lflist_deq)(lflist *l, type *t){
+    flx nil(l);
+    flx n = nil->p;
+    for(;;){
+        if(n.nil)
+            return (flref){};
+        flref r(n);
+        if(changed(&nil->n, n))
+            continue;
+        if(!lflist_del(r, t))
+            return fake_linref_up(), r;
+        must(changed(&nil->n, n));
     }
 }
 

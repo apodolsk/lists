@@ -40,6 +40,8 @@ lanchor *list_nth(unsigned int n, list *list);
 lanchor *list_deq(list *l);
 lanchor *list_peek(list *l);
 
+lanchor *list_unenq(list *l);
+
 uptr list_size(list *list);
 
 lanchor *circlist_next(lanchor *a, list *l);

@@ -62,8 +62,20 @@ lanchor *list_peek(list *l){
     return head == &l->nil ? NULL : head;
 }
 
+lanchor *list_last(list *l){
+    lanchor *tail = l->nil.p;
+    return tail == &l->nil ? NULL : tail;
+}
+
 lanchor *list_deq(list *l){
     lanchor *a = list_peek(l);
+    if(a)
+        list_del(a, l);
+    return a;
+}
+
+lanchor *list_unenq(list *l){
+    lanchor *a = list_last(l);
     if(a)
         list_del(a, l);
     return a;

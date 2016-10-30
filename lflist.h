@@ -3,7 +3,7 @@
 /* NB: lflist.cpp doesn't actually include this. You're better off reading
    lflist.hpp. */
 
-typedef struct{
+typedef struct flref{
     volatile struct flanchor *ptr;
     uptr gen;
 }flref;
@@ -78,10 +78,11 @@ flref flref_of(flanchor *a){
 flanchor *flptr(flref a);
 flref flref_of(flanchor *a);
 
-err lflist_enq_cas(uptr ng, flref a, type *t, lflist *l);
-err lflist_enq(flref a, type *t, lflist *l);
+err lflist_enq_cas(uptr ng, flref a, lflist *l, type *t);
+err lflist_enq(flref a, lflist *l, type *t);
 
-flref lflist_unenq(type *t, lflist *l);
+flref lflist_unenq(lflist *l, type *t);
+flref lflist_deq(lflist *l, type *t);
 
 err lflist_del_cas(uptr ng, flref a, type *t);
 err lflist_del(flref a, type *t);
@@ -100,6 +101,10 @@ const char *flstatestr(uptr s){
                "{%:% %, %}", (void *)(uptr)(a->pt << 3), (uptr) a->nil, \
                flstatestr(a->st), (uptr) a->gen)
 #include <pudef.h>
+#define pudef (struct flref,                                            \
+               "{%:%}", (void *) a->ptr, a->gen)
+#include <pudef.h>
+
 #define pudef (struct flanchor, "n:%, p:%", a->n, a->p)
 #include <pudef.h>
 #define pudef (struct lflist, "LIST(%)", a->nil)

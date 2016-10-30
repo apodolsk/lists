@@ -20,19 +20,21 @@ struct flref{
 };
 
 extern "C"{
+    /* This version of lflist assumes type stability. Making do with TSM
+       guarantees is tricky, but getting them is just line noise and this
+       is supposed to be pseudo-pseudocode. */
     struct type;
-    /* This version of lflist assumes type stability. */
     void fake_linref_up(void);
 
-
-    err lflist_enq_cas(uptr ng, flref a, type *t, lflist *l);
-    err lflist_enq(flref a, type *t, lflist *l);
+    err lflist_enq_cas(uptr ng, flref a, lflist *l, type *t);
+    err lflist_enq(flref a, lflist *l, type *t);
     
     err lflist_del_cas(uptr ng, flref a, type *t);
     err lflist_del(flref a, type *t);
     err lflist_jam(flref a, type *t);
 
-    flref lflist_unenq(type *t, lflist *l);
+    flref lflist_unenq(lflist *l, type *t);
+    flref lflist_deq(lflist *l, type *t);
 
     bool flanc_valid(flanchor *a);
 }
